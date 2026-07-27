@@ -1,0 +1,1 @@
+Checks: "modernize-* readability-* performance-* bugprone-* cppcoreguidelines-* clang-analyzer-*"
