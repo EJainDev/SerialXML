@@ -17,7 +17,7 @@ Thank you for your interest in contributing to SerialXML! All contributions are 
 
 ## Code of Conduct
 
-See [Code of Conduct](.github/CODE_OF_CONDUCT.md).
+See [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Reporting Bugs
 
