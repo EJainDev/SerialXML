@@ -1,0 +1,53 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 4,
+        "minor": 3,
+        "patch": 3
+    },
+    "configurePresets": [
+        {
+            "name": "base-gcc-16",
+            "hidden": true,
+            "description": "A preset with Ninja and GCC 16",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc-16",
+                "CMAKE_CXX_COMPILER": "g++-16"
+            }
+        },
+        {
+            "name": "debug-gcc-16",
+            "displayName": "Debug (GCC 16 & Ninja)",
+            "inherits": "base-gcc-16",
+            "description": "A debug preset with Ninja and GCC 16",
+            "binaryDir": "${sourceDir}/build/debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "release-gcc-16",
+            "displayName": "Release (GCC 16 & Ninja)",
+            "inherits": "base-gcc-16",
+            "description": "A release preset with Ninja and GCC 16",
+            "binaryDir": "${sourceDir}/build/release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "build-debug",
+            "displayName": "Build Debug",
+            "configurePreset": "debug-gcc-16"
+        },
+        {
+            "name": "build-release",
+            "displayName": "Build Release",
+            "configurePreset": "release-gcc-16"
+        }
+    ]
+}
