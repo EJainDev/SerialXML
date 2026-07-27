@@ -359,29 +359,6 @@ void add_attribute(std::string& result, const auto& value) {
         return original_size + prefix_size + ((ptr + 1) - buf);
       });
     }
-  } else if constexpr (m_t == ^^std::string || m_t == ^^std::string_view) {
-    auto escape_result = get_escape_bitmask(value);
-
-    auto num_escapes = count_escapes(std::get<0>(escape_result), std::get<1>(escape_result));
-
-    const auto original_size = result.size();
-
-    result.resize_and_overwrite(result.size() + prefix_size + 1 + value.size() + (num_escapes * 5),
-                                [&](char* buf, std::size_t) {
-                                  buf += original_size;
-
-                                  const char* original_buf = buf;
-
-                                  std::memcpy(buf, prefix, prefix_size);
-
-                                  buf += prefix_size;
-
-                                  buf += copy_with_escapes(buf, value, std::get<0>(escape_result),
-                                                           std::get<1>(escape_result));
-
-                                  *buf = '"';
-                                  return original_size + (buf + 1) - original_buf;
-                                });
   } else {
     std::string buffer [[indeterminate]];
     buffer.reserve(256);
@@ -478,28 +455,6 @@ void add_child(std::string& result, const auto& value) {
         return original_size + (combined_size + (ptr - buf));
       });
     }
-  } else if constexpr (m_t == ^^std::string || m_t == ^^std::string_view) {
-    auto escape_result = get_escape_bitmask(value);
-
-    auto num_escapes = count_escapes(std::get<0>(escape_result), std::get<1>(escape_result));
-
-    result.resize_and_overwrite(original_size + combined_size + value.size() + (num_escapes * 5),
-                                [&](char* buf, std::size_t) {
-                                  const auto original_buf = buf;
-
-                                  buf += original_size;
-
-                                  std::memcpy(buf, opening_tag, opening_tag_size);
-
-                                  buf += opening_tag_size;
-
-                                  buf += copy_with_escapes(buf, value, std::get<0>(escape_result),
-                                                           std::get<1>(escape_result));
-
-                                  std::memcpy(buf, closing_tag, closing_tag_size);
-
-                                  return (buf + closing_tag_size) - original_buf;
-                                });
   } else {
     static constexpr char const* gen_format =
         std::define_static_string(std::string("{:") + format + '}');
