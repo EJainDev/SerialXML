@@ -27,8 +27,10 @@ Before submitting a bug report, ensure the issue hasn't been reported already. P
 
 To report compile errors, specify:
 1. The exact error message or symptom.
-2. The compiler compilation log.
-3. A minimal, self-contained reproducible example.
+2. The compiler and version (for example, GCC 16.1) and the CMake version used (for example, 4.3.0).
+3. The full compiler output / compilation log.
+4. A minimal, self-contained reproducible example (smallest code that reproduces the problem).
+5. The exact build commands or CMake preset used to reproduce the issue (for example: `cmake --preset debug-gcc-16` and `cmake --build --preset build-debug`).
 
 ### Runtime Bugs
 
@@ -37,10 +39,17 @@ To report runtime bugs, specify:
 2. What should have happened.
 3. A minimal reproducing example.
 4. Why it could have happened (optional).
+5. Steps to reproduce the behavior (exact commands, inputs, and any environment information required to trigger the issue).
 
 ## Feature Requests
 
-Feature requests drive the growth of this library. All requests are welcome, even if you cannot implement them yourself. If you propose a feature, please test the implementation via a PR. Include:
+Feature requests drive the growth of this library. All requests are welcome, even if you cannot implement them yourself. The feature request template includes a "Testing Commitment" checkbox — please select one of the following options to indicate your level of involvement:
+
+- **Test only**: I can help test or validate a PR but will not implement it.
+- **Implement and test (PR)**: I will implement the feature and submit a PR that includes tests.
+- **Neither**: I cannot implement or test this change; this is a request only.
+
+When possible, prefer **Implement and test (PR)** so the change can be reviewed and merged more quickly. Include:
 1. Feature description.
 2. Intent and use case for the feature.
 3. Example usage (optional).

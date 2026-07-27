@@ -1,0 +1,45 @@
+name: "Compile Bug Report"
+title: "[Bug]: "
+description: "Report a compile error or build issue."
+labels: ["bug", "compile-error"]
+body:
+  - type: markdown
+    attributes:
+      value: "## Compile Bug Report"
+  - type: input
+    id: compiler
+    attributes:
+      label: Compiler & Version
+      description: "e.g., GCC 16.1, Clang 19"
+    validations:
+      required: true
+  - type: input
+    id: cmake
+    attributes:
+      label: CMake Version
+      description: "e.g., 4.3.0"
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: Issue Description
+      description: "Specify what the issue is."
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Compiler Log
+      description: "Paste the full compilation error log."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal Reproducible Example
+      description: "Provide a minimal, self-contained code snippet that triggers the error."
+      render: cpp
+    validations:
+      required: true

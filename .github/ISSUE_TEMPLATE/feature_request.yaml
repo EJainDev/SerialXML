@@ -1,0 +1,39 @@
+name: "Feature Request"
+title: "[Feature]: "
+description: Request a feature addition to the library
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: "## Feature Request"
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: "Describe the feature you'd like to see."
+    validations:
+      required: true
+  - type: textarea
+    id: intent
+    attributes:
+      label: Intent & Use Case
+      description: "Why is this feature needed? What problem does it solve?"
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: Example Usage (Optional)
+      description: "Show how you expect to use this feature."
+  - type: markdown
+    attributes:
+      value: "## Implementation"
+  - type: checkboxes
+    id: testing
+    attributes:
+      label: Testing Commitment
+      description: "If you plan to implement this, please confirm you will test the PR."
+      options:
+        - label: "Test only"
+        - label: "Implement and test (PR)"
+        - label: "Neither"
