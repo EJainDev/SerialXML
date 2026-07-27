@@ -48,15 +48,6 @@ TEST(Basic, AttributeAndSkip) {
   ASSERT_EQ(clean_to_xml(obj), "<MyStruct x=\"42\"/>");
 }
 
-TEST(Basic, FormattedAttribute) {
-  struct FormattedAttribute {
-    [[ = serial_xml::attribute, = serial_xml::format{"03d"} ]] int x;
-  };
-  FormattedAttribute obj{42};
-
-  ASSERT_EQ(clean_to_xml(obj), "<FormattedAttribute x=\"042\"/>");
-}
-
 TEST(Basic, Child) {
   struct[[= serial_xml::name{"MyStruct"}]] Child {
     int x;
@@ -73,15 +64,6 @@ TEST(Basic, NamedChild) {
   NamedChild obj{42};
 
   ASSERT_EQ(clean_to_xml(obj), "<NamedChild><field>42</field></NamedChild>");
-}
-
-TEST(Basic, FormattedChild) {
-  struct FormattedChild {
-    [[= serial_xml::format{"03d"}]] int x;
-  };
-  FormattedChild obj{42};
-
-  ASSERT_EQ(clean_to_xml(obj), "<FormattedChild><x>042</x></FormattedChild>");
 }
 
 TEST(Basic, Children) {
@@ -108,9 +90,8 @@ TEST(Basic, AttributesAndChildren) {
     int y;
   };
   AttributesAndChildren obj{42, 100};
-  ASSERT_EQ(
-      clean_to_xml(obj),
-      "<AttributesAndChildren x=\"42\"><y>100</y></AttributesAndChildren>");
+  ASSERT_EQ(clean_to_xml(obj),
+            "<AttributesAndChildren x=\"42\"><y>100</y></AttributesAndChildren>");
 }
 
 TEST(Nesting, NestedStruct) {
@@ -128,9 +109,10 @@ struct NoUnpackInner {
   int x;
 };
 
-template <> struct std::formatter<NoUnpackInner> : std::formatter<std::string> {
+template <>
+struct std::formatter<NoUnpackInner> : std::formatter<std::string> {
   template <typename FormatContext>
-  auto format(const NoUnpackInner &value, FormatContext &ctx) const {
+  auto format(const NoUnpackInner& value, FormatContext& ctx) const {
     return std::formatter<std::string>::format(std::to_string(value.x), ctx);
   }
 };
@@ -140,8 +122,7 @@ TEST(Nesting, NoUnpack) {
     [[= serial_xml::no_unpack]] NoUnpackInner inner;
   };
   NoUnpackOuter obj{{42}};
-  ASSERT_EQ(clean_to_xml(obj),
-            "<NoUnpackOuter><inner>42</inner></NoUnpackOuter>");
+  ASSERT_EQ(clean_to_xml(obj), "<NoUnpackOuter><inner>42</inner></NoUnpackOuter>");
 }
 
 TEST(STL, Vector) {
@@ -184,20 +165,20 @@ TEST(STL, NestedVector) {
             "4]</element></values></NestedVector>");
 }
 
-template <typename T> struct CustomList {
+template <typename T>
+struct CustomList {
   T data[16];
   std::size_t sz = 0;
 
   constexpr CustomList() = default;
   constexpr CustomList(std::initializer_list<T> init) {
     for (auto v : init) {
-      if (sz < 16)
-        data[sz++] = v;
+      if (sz < 16) data[sz++] = v;
     }
   }
 
-  using iterator = const T *;
-  using const_iterator = const T *;
+  using iterator = const T*;
+  using const_iterator = const T*;
   using value_type = T;
   using size_type = std::size_t;
 
@@ -209,7 +190,7 @@ template <typename T> struct CustomList {
   constexpr size_type size() const { return sz; }
   constexpr bool empty() const { return sz == 0; }
 
-  constexpr const T &operator[](std::size_t i) const { return data[i]; }
+  constexpr const T& operator[](std::size_t i) const { return data[i]; }
 };
 
 TEST(Basic, Iter) {
@@ -260,9 +241,7 @@ TEST(Escaping, Child) {
   };
 
   EscapeChild obj{"<>&'\""};
-  ASSERT_EQ(
-      clean_to_xml(obj),
-      "<EscapeChild><text>&lt;&gt;&amp;&apos;&quot;</text></EscapeChild>");
+  ASSERT_EQ(clean_to_xml(obj), "<EscapeChild><text>&lt;&gt;&amp;&apos;&quot;</text></EscapeChild>");
 }
 
 TEST(Escaping, ComplexChild) {
@@ -272,9 +251,10 @@ TEST(Escaping, ComplexChild) {
   };
 
   EscapeComplexChild obj{"Hi! <> My name is & Bob. ' And \" This", 42};
-  ASSERT_EQ(clean_to_xml(obj), "<EscapeComplexChild><text>Hi! &lt;&gt; My name "
-                               "is &amp; Bob. &apos; And &quot; This</"
-                               "text><number>42</number></EscapeComplexChild>");
+  ASSERT_EQ(clean_to_xml(obj),
+            "<EscapeComplexChild><text>Hi! &lt;&gt; My name "
+            "is &amp; Bob. &apos; And &quot; This</"
+            "text><number>42</number></EscapeComplexChild>");
 }
 
 TEST(Escaping, Attribute) {
@@ -283,8 +263,7 @@ TEST(Escaping, Attribute) {
   };
 
   EscapeAttribute obj{"<>&'\""};
-  ASSERT_EQ(clean_to_xml(obj),
-            "<EscapeAttribute text=\"&lt;&gt;&amp;&apos;&quot;\"/>");
+  ASSERT_EQ(clean_to_xml(obj), "<EscapeAttribute text=\"&lt;&gt;&amp;&apos;&quot;\"/>");
 }
 
 TEST(Escaping, Raw) {
@@ -293,6 +272,42 @@ TEST(Escaping, Raw) {
   };
 
   EscapeRaw obj{"<>&'\""};
+  ASSERT_EQ(clean_to_xml(obj), "<EscapeRaw>&lt;&gt;&amp;&apos;&quot;</EscapeRaw>");
+}
+
+TEST(Formatting, Attribute) {
+  struct FormattedAttribute {
+    [[ = serial_xml::attribute, = serial_xml::format{"03d"} ]] int x;
+  };
+  FormattedAttribute obj{42};
+
+  ASSERT_EQ(clean_to_xml(obj), "<FormattedAttribute x=\"042\"/>");
+}
+
+TEST(Formatting, Child) {
+  struct FormattedChild {
+    [[= serial_xml::format{"03d"}]] int x;
+  };
+  FormattedChild obj{42};
+
+  ASSERT_EQ(clean_to_xml(obj), "<FormattedChild><x>042</x></FormattedChild>");
+}
+
+TEST(Formatting, Raw) {
+  struct FormattedRaw {
+    [[ = serial_xml::raw, = serial_xml::format{"03d"} ]] int x;
+  };
+  FormattedRaw obj{42};
+
+  ASSERT_EQ(clean_to_xml(obj), "<FormattedRaw>042</FormattedRaw>");
+}
+
+TEST(Formatting, StringChild) {
+  struct FormattedStringChild {
+    [[= serial_xml::format{"*^12"}]] std::string text;
+  };
+  FormattedStringChild obj{"text"};
+
   ASSERT_EQ(clean_to_xml(obj),
-            "<EscapeRaw>&lt;&gt;&amp;&apos;&quot;</EscapeRaw>");
+            "<FormattedStringChild><text>****text****</text></FormattedStringChild>");
 }
