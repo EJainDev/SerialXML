@@ -707,7 +707,8 @@ void to_xml(const T& value, std::string& result, bool first, const std::string& 
               if constexpr (custom_format.has_value()) {
                 static constexpr auto gen_format =
                     std::define_static_string(std::string("{:") + *custom_format + '}');
-                std::format_to(std::back_inserter(buffer), gen_format, value.[:m:]);
+                std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
+                               value.[:m:]);
               } else {
                 std::format_to(std::back_inserter(buffer), "{}", value.[:m:]);
               }
