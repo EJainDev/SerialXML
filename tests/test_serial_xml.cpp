@@ -244,3 +244,55 @@ TEST(Basic, InvalidAnnotationCombinations) {
 
   ASSERT_THROW(clean_to_xml(unnamed), std::logic_error);
 }
+
+TEST(Basic, Raw) {
+  struct Raw {
+    [[= serial_xml::raw]] std::string text;
+  };
+
+  Raw obj{"text"};
+  ASSERT_EQ(clean_to_xml(obj), "<Raw>text</Raw>");
+}
+
+TEST(Escaping, Child) {
+  struct EscapeChild {
+    std::string text;
+  };
+
+  EscapeChild obj{"<>&'\""};
+  ASSERT_EQ(
+      clean_to_xml(obj),
+      "<EscapeChild><text>&lt;&gt;&amp;&apos;&quot;</text></EscapeChild>");
+}
+
+TEST(Escaping, ComplexChild) {
+  struct EscapeComplexChild {
+    std::string text;
+    int number;
+  };
+
+  EscapeComplexChild obj{"Hi! <> My name is & Bob. ' And \" This", 42};
+  ASSERT_EQ(clean_to_xml(obj), "<EscapeComplexChild><text>Hi! &lt;&gt; My name "
+                               "is &amp; Bob. &apos; And &quot; This</"
+                               "text><number>42</number></EscapeComplexChild>");
+}
+
+TEST(Escaping, Attribute) {
+  struct EscapeAttribute {
+    [[= serial_xml::attribute]] std::string text;
+  };
+
+  EscapeAttribute obj{"<>&'\""};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<EscapeAttribute text=\"&lt;&gt;&amp;&apos;&quot;\"/>");
+}
+
+TEST(Escaping, Raw) {
+  struct EscapeRaw {
+    [[= serial_xml::raw]] std::string text;
+  };
+
+  EscapeRaw obj{"<>&'\""};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<EscapeRaw>&lt;&gt;&amp;&apos;&quot;</EscapeRaw>");
+}

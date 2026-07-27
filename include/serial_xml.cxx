@@ -1,5 +1,6 @@
 module;
 
+#include <cstdint>
 #include <simd> // GCC 16.1 does not have in this in the std module
 
 export module serial_xml;
@@ -174,99 +175,139 @@ template <auto name> consteval auto get_attribute_prefix() {
   return std::make_tuple(std::define_static_string(prefix), prefix.size());
 }
 
-std::tuple<std::unique_ptr<bool[]>, int>
-get_escape_bitmask(std::string_view input) {
+template <std::size_t simd_size> consteval std::meta::info get_type() {
+  static_assert(simd_size >= 8, "SIMD mask size must be at least 8 elements.");
+
+  if constexpr (simd_size <= 8) {
+    return ^^uint8_t;
+  }
+  if constexpr (simd_size <= 16) {
+    return ^^uint16_t;
+  }
+  if constexpr (simd_size <= 32) {
+    return ^^uint32_t;
+  }
+  return ^^uint64_t;
+}
+
+auto get_escape_bitmask(std::string_view input) {
   using simd_t = std::simd::vec<char>;
 
   std::size_t padded_size [[indeterminate]];
-  if (input.size() % sizeof(std::int64_t) != 0) {
-    padded_size = (input.size() / sizeof(std::int64_t)) + 1;
+  if ((input.size() % simd_t::size()) != 0) {
+    padded_size = (input.size() / simd_t::size()) + 1;
   } else {
-    padded_size = input.size() / sizeof(std::int64_t);
+    padded_size = input.size() / simd_t::size();
   }
 
-  auto escape_flags = std::make_unique_for_overwrite<bool[]>(
-      padded_size * sizeof(std::int64_t) / sizeof(bool));
-  std::size_t i [[indeterminate]];
-  for (i = 0; i < input.size(); i += simd_t::size()) {
-    auto v =
-        std::simd::unchecked_load<simd_t>(input.data() + i, simd_t::size());
+  using FlagsT = typename[:get_type<simd_t::size()>():];
+
+  auto escape_flags = std::make_unique<FlagsT[]>(
+      std::max(sizeof(uint64_t) / sizeof(FlagsT), padded_size));
+  std::size_t i{0};
+
+  static constexpr auto idx_seq = std::make_index_sequence<simd_t::size()>{};
+
+  if (static_cast<std::size_t>(simd_t::size()) <= input.size()) {
+    for (i = 0; i < input.size(); i += simd_t::size()) {
+      if (i + simd_t::size() > input.size()) {
+        break;
+      }
+      auto v =
+          std::simd::unchecked_load<simd_t>(input.data() + i, simd_t::size());
+
+      auto mask =
+          (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
+
+      template for (constexpr auto j : idx_seq) {
+        escape_flags[i / (sizeof(FlagsT) * 8)] |= mask[static_cast<int>(j)]
+                                                  << j;
+      }
+    }
+
+    const auto remaining = simd_t::size() - (i - input.size());
+    auto v = std::simd::partial_load<simd_t>(
+        input.data() + (input.size() - remaining), remaining);
 
     auto mask = (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
-    const auto &mask_bitset = mask.to_bitset();
 
-    std::memcpy(escape_flags.get() + i, &mask_bitset,
-                mask.size() * sizeof(bool));
+    static constexpr auto n_idx_seq =
+        std::make_index_sequence<simd_t::size() & 7>{};
+
+    template for (constexpr auto j : n_idx_seq) {
+      escape_flags[i / (sizeof(FlagsT) * 8)] |= mask[static_cast<int>(j)] << j;
+    }
+  } else {
+    auto v = std::simd::partial_load<simd_t>(input.data(), input.size());
+
+    auto mask = (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
+
+    template for (constexpr auto j : idx_seq) {
+      escape_flags[0] |= mask[static_cast<int>(j)] << j;
+    }
   }
-
-  const auto remaining = simd_t::size() - (i - input.size());
-  auto v = std::simd::partial_load<simd_t>(
-      input.data() + (input.size() - remaining), remaining);
-
-  auto mask = (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
-  const auto &mask_bitset = mask.to_bitset();
-
-  std::memcpy(escape_flags.get() + (input.size() - remaining), &mask_bitset,
-              remaining * sizeof(bool));
 
   return std::tuple{std::move(escape_flags), padded_size};
 }
 
-int count_escapes(const std::unique_ptr<bool[]> &escape_flags,
-                  int padded_size) {
-  auto *escape_flags_ptr =
-      reinterpret_cast<std::uint64_t *>(escape_flags.get());
+template <typename T>
+int count_escapes(const std::unique_ptr<T[]> &escape_flags, int padded_size) {
+  auto *escape_flags_ptr = reinterpret_cast<uint64_t *>(escape_flags.get());
   int count = 0;
-  for (std::size_t i = 0; i < padded_size; ++i) {
+  for (int i = 0;
+       i < static_cast<int>(std::ceil(static_cast<double>(padded_size) *
+                                      sizeof(T) / sizeof(uint64_t)));
+       ++i) {
     count += std::popcount(escape_flags_ptr[i]);
   }
   return count;
 }
 
+template <typename T>
 std::size_t copy_with_escapes(char *buf, std::string_view input,
-                              std::unique_ptr<bool[]> escape_flags,
-                              int padded_size) {
+                              const std::unique_ptr<T[]> &escape_flags,
+                              std::size_t padded_size) {
   const char *original_buf = buf;
 
   auto *escape_flags_ptr =
       reinterpret_cast<std::uint64_t *>(escape_flags.get());
 
-  int last = 0;
+  for (std::size_t i = 0;
+       i < static_cast<int>(std::ceil(static_cast<double>(padded_size) *
+                                      sizeof(T) / sizeof(uint64_t)));
+       ++i) {
+    std::size_t last = i * sizeof(std::uint64_t);
+    int prev_idx = 0;
+    int idx [[indeterminate]];
 
-  for (std::size_t i = 0; i < padded_size; ++i) {
     while (escape_flags_ptr[i] != 0) {
-      const int idx = std::countr_zero(escape_flags_ptr[i]) / sizeof(bool);
+      idx = std::countr_zero(escape_flags_ptr[i]);
 
-      std::memcpy(buf, input.data() + last, idx - last);
-      buf += (idx - last);
+      std::memcpy(buf, input.data() + last + prev_idx, idx - prev_idx);
+      buf += (idx - prev_idx);
 
-      last = idx;
+      prev_idx = idx + 1;
 
       switch (input[last + idx]) {
       case '<':
         std::memcpy(buf, "&lt;", 4);
         buf += 4;
-        ++last;
         break;
       case '>':
         std::memcpy(buf, "&gt;", 4);
         buf += 4;
-        ++last;
         break;
       case '&':
         std::memcpy(buf, "&amp;", 5);
         buf += 5;
-        ++last;
         break;
       case '"':
         std::memcpy(buf, "&quot;", 6);
         buf += 6;
-        ++last;
         break;
       case '\'':
         std::memcpy(buf, "&apos;", 6);
         buf += 6;
-        ++last;
         break;
       default:
         throw std::logic_error("Unexpected character for escaping");
@@ -274,11 +315,15 @@ std::size_t copy_with_escapes(char *buf, std::string_view input,
 
       escape_flags_ptr[i] &= (escape_flags_ptr[i] - 1);
     }
+
+    if (static_cast<std::size_t>(prev_idx) < 63) {
+      std::memcpy(buf, input.data() + last + prev_idx,
+                  std::min(63uz - prev_idx, input.size() - last - prev_idx));
+      buf += std::min(63uz - prev_idx, input.size() - last - prev_idx);
+    }
   }
 
-  std::memcpy(buf, input.data() + last, input.size() - last);
-
-  return (buf + (input.size() - last)) - original_buf;
+  return buf - original_buf;
 }
 
 template <char const *name, char const *format>
@@ -289,9 +334,11 @@ void add_attribute(std::string &result, const auto &value) {
   static constexpr auto prefix_result = get_attribute_prefix<name>();
   static constexpr auto prefix = std::get<0>(prefix_result);
   static constexpr auto prefix_size = std::get<1>(prefix_result);
-  static constexpr auto gen_format = std::string("{:") + format + "}";
+  static constexpr auto gen_format =
+      std::define_static_string(std::string("{:") + format + "}");
 
-  if constexpr (std::is_arithmetic_v<T> && sizeof(T) <= 64 && format == "") {
+  if constexpr (std::is_arithmetic_v<T> && sizeof(T) <= 64 &&
+                std::strcmp(format, "") == 0) {
     if constexpr (std::is_floating_point_v<T>) {
       static constexpr auto format_resize = 311 + prefix_size + 1;
 
@@ -317,7 +364,7 @@ void add_attribute(std::string &result, const auto &value) {
       const auto original_size = result.size();
 
       result.resize_and_overwrite(
-          result.size() + format_resize, [&](char *buf, std::size_t max_size) {
+          result.size() + format_resize, [&](char *buf, std::size_t) {
             buf += original_size;
 
             std::memcpy(buf, prefix, prefix_size);
@@ -341,7 +388,7 @@ void add_attribute(std::string &result, const auto &value) {
 
     result.resize_and_overwrite(
         result.size() + prefix_size + 1 + value.size() + (num_escapes * 5),
-        [&](char *buf, std::size_t max_size) {
+        [&](char *buf, std::size_t) {
           buf += original_size;
 
           const char *original_buf = buf;
@@ -350,20 +397,17 @@ void add_attribute(std::string &result, const auto &value) {
 
           buf += prefix_size;
 
-          buf += copy_with_escapes(buf, value,
-                                   std::move(std::get<0>(escape_result)),
+          buf += copy_with_escapes(buf, value, std::get<0>(escape_result),
                                    std::get<1>(escape_result));
 
           *buf = '"';
           return original_size + (buf + 1) - original_buf;
         });
   } else {
-    static constexpr auto gen_format =
-        std::define_static_string(std::string("{:") + format + '}');
-
     std::string buffer [[indeterminate]];
     buffer.reserve(256);
-    std::format_to(std::back_inserter(buffer), gen_format, value);
+    std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
+                   value);
 
     auto escape_result = get_escape_bitmask(buffer);
 
@@ -374,7 +418,7 @@ void add_attribute(std::string &result, const auto &value) {
 
     result.resize_and_overwrite(
         original_size + prefix_size + buffer.size() + 1 + (num_escapes * 5),
-        [&](char *buf, std::size_t max_size) {
+        [&](char *buf, std::size_t) {
           buf += original_size;
 
           const char *original_buf = buf;
@@ -383,8 +427,7 @@ void add_attribute(std::string &result, const auto &value) {
 
           buf += prefix_size;
 
-          buf += copy_with_escapes(buf, buffer,
-                                   std::move(std::get<0>(escape_result)),
+          buf += copy_with_escapes(buf, buffer, std::get<0>(escape_result),
                                    std::get<1>(escape_result));
 
           *buf = '"';
@@ -425,7 +468,8 @@ void add_child(std::string &result, const auto &value) {
 
   const auto original_size = result.size();
 
-  if constexpr (std::is_arithmetic_v<T> && sizeof(T) <= 64 && format == "") {
+  if constexpr (std::is_arithmetic_v<T> && sizeof(T) <= 64 &&
+                std::strcmp(format, "") == 0) {
     if constexpr (std::is_floating_point_v<T>) {
       static constexpr auto format_resize = 311 + combined_size;
       result.resize_and_overwrite(
@@ -446,7 +490,7 @@ void add_child(std::string &result, const auto &value) {
       static constexpr auto format_resize = 20 + combined_size;
 
       result.resize_and_overwrite(
-          original_size + format_resize, [&](char *buf, std::size_t max_size) {
+          original_size + format_resize, [&](char *buf, std::size_t) {
             buf += original_size;
 
             std::memcpy(buf, opening_tag, opening_tag_size);
@@ -457,7 +501,7 @@ void add_child(std::string &result, const auto &value) {
 
             std::memcpy(ptr, closing_tag, closing_tag_size);
 
-            return (combined_size + (ptr - buf));
+            return original_size + (combined_size + (ptr - buf));
           });
     }
   } else if constexpr (m_t == ^^std::string || m_t == ^^std::string_view) {
@@ -468,7 +512,7 @@ void add_child(std::string &result, const auto &value) {
 
     result.resize_and_overwrite(
         original_size + combined_size + value.size() + (num_escapes * 5),
-        [&](char *buf, std::size_t max_size) {
+        [&](char *buf, std::size_t) {
           const auto original_buf = buf;
 
           buf += original_size;
@@ -477,8 +521,7 @@ void add_child(std::string &result, const auto &value) {
 
           buf += opening_tag_size;
 
-          buf += copy_with_escapes(buf, value,
-                                   std::move(std::get<0>(escape_result)),
+          buf += copy_with_escapes(buf, value, std::get<0>(escape_result),
                                    std::get<1>(escape_result));
 
           std::memcpy(buf, closing_tag, closing_tag_size);
@@ -486,12 +529,13 @@ void add_child(std::string &result, const auto &value) {
           return (buf + closing_tag_size) - original_buf;
         });
   } else {
-    static constexpr auto gen_format =
+    static constexpr char const *gen_format =
         std::define_static_string(std::string("{:") + format + '}');
 
     std::string buffer [[indeterminate]];
     buffer.reserve(256);
-    std::format_to(std::back_inserter(buffer), gen_format, value);
+    std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
+                   value);
 
     auto escape_result = get_escape_bitmask(buffer);
 
@@ -500,7 +544,7 @@ void add_child(std::string &result, const auto &value) {
 
     result.resize_and_overwrite(
         original_size + combined_size + buffer.size() + (num_escapes * 5),
-        [&](char *buf, std::size_t max_size) {
+        [&](char *buf, std::size_t) {
           const auto original_buf = buf;
 
           buf += original_size;
@@ -509,8 +553,7 @@ void add_child(std::string &result, const auto &value) {
 
           buf += opening_tag_size;
 
-          buf += copy_with_escapes(buf, buffer,
-                                   std::move(std::get<0>(escape_result)),
+          buf += copy_with_escapes(buf, buffer, std::get<0>(escape_result),
                                    std::get<1>(escape_result));
 
           std::memcpy(buf, closing_tag, closing_tag_size);
@@ -622,9 +665,9 @@ void to_xml(const T &value, std::string &result, bool first,
     static constexpr auto custom_format = std::get<5>(m_annotations);
     static constexpr auto iter_names = std::get<6>(m_annotations);
 
-    static constexpr auto name = std::get<7>(m_annotations);
+    static constexpr auto m_name = std::get<7>(m_annotations);
 
-    static constexpr auto view_name = std::string_view(name);
+    static constexpr auto view_name = std::string_view(m_name);
 
     if constexpr (is_skip) {
       continue;
@@ -657,7 +700,7 @@ void to_xml(const T &value, std::string &result, bool first,
         if constexpr (std::meta::parent_of(std::meta::type_of(m)) ==
                       std::meta::parent_of(^^std::optional)) {
           handled_stl =
-              handle_stl<is_attribute, is_no_iter, name,
+              handle_stl<is_attribute, is_no_iter, m_name,
                          (custom_format) ? *custom_format
                                          : std::define_static_string("")>(
                   result, body, value.[:m:]);
@@ -665,7 +708,7 @@ void to_xml(const T &value, std::string &result, bool first,
       }
       if (!handled_stl) {
         if constexpr (is_unpack) {
-          to_xml(value.[:m:], body, false, name);
+          to_xml(value.[:m:], body, false, m_name);
         } else if constexpr (iter_names.has_value() &&
                              std::meta::is_class_type(std::meta::type_of(m)) &&
                              std::ranges::range<
@@ -702,20 +745,47 @@ void to_xml(const T &value, std::string &result, bool first,
         } else {
           if constexpr (is_attribute) {
             if constexpr (custom_format.has_value()) {
-              add_attribute<name, *custom_format>(result, value.[:m:]);
+              add_attribute<m_name, *custom_format>(result, value.[:m:]);
             } else {
-              add_attribute<name, std::define_static_string("")>(result,
-                                                                 value.[:m:]);
+              add_attribute<m_name, std::define_static_string("")>(result,
+                                                                   value.[:m:]);
             }
           } else {
             if constexpr (is_raw) {
-              body += std::format("{}", value.[:m:]);
+              std::string buffer [[indeterminate]];
+              buffer.reserve(64);
+
+              if constexpr (custom_format.has_value()) {
+                static constexpr auto gen_format = std::define_static_string(
+                    std::string("{:") + *custom_format + '}');
+                std::format_to(std::back_inserter(buffer), gen_format,
+                               value.[:m:]);
+              } else {
+                std::format_to(std::back_inserter(buffer), "{}", value.[:m:]);
+              }
+
+              auto escape_result = get_escape_bitmask(buffer);
+
+              auto num_escapes = count_escapes(std::get<0>(escape_result),
+                                               std::get<1>(escape_result));
+
+              const auto original_size = body.size();
+              body.resize_and_overwrite(
+                  original_size + buffer.size() + (num_escapes * 5),
+                  [&](char *buf, std::size_t) {
+                    buf += original_size;
+
+                    return original_size +
+                           copy_with_escapes(buf, buffer,
+                                             std::get<0>(escape_result),
+                                             std::get<1>(escape_result));
+                  });
             } else {
               if constexpr (custom_format.has_value()) {
-                add_child<name, *custom_format>(body, value.[:m:]);
+                add_child<m_name, *custom_format>(body, value.[:m:]);
               } else {
-                add_child<name, std::define_static_string("")>(body,
-                                                               value.[:m:]);
+                add_child<m_name, std::define_static_string("")>(body,
+                                                                 value.[:m:]);
               }
             }
           }
@@ -741,7 +811,8 @@ std::string to_xml(const T &value, bool first = true) {
 
 export std::string prettify(const std::string &xml) {
   std::string result;
-  result.reserve(static_cast<std::size_t>(xml.size() * 1.5));
+  result.reserve(
+      static_cast<std::size_t>(static_cast<double>(xml.size()) * 1.5));
 
   int indent_level = 0;
   auto append_indent = [&](int level) {
