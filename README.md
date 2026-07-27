@@ -10,9 +10,9 @@
 
 SerialXML is a C++26 reflection based serialization library for XML. Behaviour is configurable via annotations on object members and object type declarations (`class/struct`).
 
-## Get Started
+## Quick Start
 
-Getting started is easy, just call one function on any regular C++ struct. No modifications required to anything! Simply import the module and call `to_xml`.
+Getting started is easy. Simply import the module and call `to_xml` on any regular C++ struct. No modifications required to anything!
 
 ```cpp
 // main.cpp
@@ -40,7 +40,7 @@ That's all you need: one function call and SerialXML does the rest.
 FetchContent_Declare(
     serial_xml
     GIT_REPOSITORY https://github.com/EJainDev/SerialXML.git
-    GIT_TAG v1.0.0.0
+    GIT_TAG main
 )
 FetchContent_MakeAvailable(serial_xml)
 
@@ -66,7 +66,7 @@ find_package(SerialXML REQUIRED)
 target_link_libraries(my_app PRIVATE serial_xml::serial_xml)
 ```
 
-### Requirements
+## Requirements
 
 | Component | Min Version | Notes |
 | --------- | ----------- | ----- |
@@ -84,7 +84,7 @@ You can use the various annotations provided by the library to control how your 
 - `[[=skip]]` -- Don't include this struct member in the generated XML output.
 - `[[=name{"custom_name"}]]` -- Specify the name of this attribute or child tag to be something other than the name of the member. Note: You can also specify this on the struct to control its closing tag (eg. generate `person` instead of `Person` for `struct Person` with `[[=name{"person"}]]`).
 - `[[=unpack]]` -- Instead of calling `std::format` on the member object, generate an enclosing XML tag for each of its children.
-- `[[=no_unpack]]`-- Call `std::format` on the member object instead of breaking it down into its children. Opposite of `unpack`
+- `[[=no_unpack]]` -- Call `std::format` on the member object instead of breaking it down into its children. Opposite of `unpack`.
 - `[[=iter{a, b}]]` -- For classes satisfying `std::ranges::range`, iterate through each member instead of directly calling `std::format`. The first (optional) parameter is the name of the tag for each element in the range. The second (optional) parameter is the name of the range tag enclosing each element.
 - `[[=no_iter]]` -- The opposite of `iter` to disable automatic iteration of STL ranges. See the confusion points for more information on STL handling.
 - `[[=format{"format_specifier"}]]` -- Add a format specifier in the call to `std::format` for that member. Do not prefix with a colon (`:`) as the library handles that on its own.
@@ -92,3 +92,11 @@ You can use the various annotations provided by the library to control how your 
 ### Common Confusion Points
 
 1. For *some* STL containers, the library automatically iterates through them. Therefore, your generated XML will not match the expectations. To avoid this, add the `[[=no_iter]]` annotation to object member.
+
+## Contributing
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on the process for submitting pull requests to us.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
