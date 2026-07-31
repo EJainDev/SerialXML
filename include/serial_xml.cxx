@@ -535,9 +535,9 @@ bool handle_stl(std::string& result, std::string& body, const auto& value) {
 
 template <typename T>
   requires(std::is_class_v<T>)
-void to_xml(const T& value, std::string& result, bool first, const std::string& fixed_name = "") {
+void to_xml(const T& value, std::string& result, std::string& body, std::string& buffer, bool first,
+            const std::string& fixed_name = "") {
   if (first) {
-    result.reserve(4096);
     result = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
   }
 
@@ -545,27 +545,25 @@ void to_xml(const T& value, std::string& result, bool first, const std::string& 
 
   static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(M));
 
-  std::string name;
   if (!fixed_name.empty()) {
-    name = fixed_name;
+    buffer = fixed_name;
   } else {
     template for (constexpr auto a : annotations) {
       if constexpr (std::meta::template_of(std::meta::type_of(a)) == ^^::serial_xml::name) {
         static constexpr auto temp_name = std::meta::extract<typename[:std::meta::type_of(a):]>(a);
-        name = std::string(temp_name.value);
+        buffer = std::string(temp_name.value);
       }
     }
-    if (name.empty()) {
+    if (buffer.empty()) {
       if constexpr (std::meta::has_identifier(M)) {
         static constexpr auto temp_name = std::meta::identifier_of(M);
-        name = std::string(temp_name);
+        buffer = std::string(temp_name);
       }
     }
   }
 
-  result += std::format("<{}", name);
+  result += std::format("<{}", buffer);
 
-  std::string body;
   static constexpr auto members = std::define_static_array(
       std::meta::nonstatic_data_members_of(M, std::meta::access_context::current()));
 
@@ -607,6 +605,8 @@ void to_xml(const T& value, std::string& result, bool first, const std::string& 
     } else {
       bool handled_stl = false;
 
+      std::string buffer_2 [[indeterminate]];
+
       if constexpr (!iter_names.has_value() && std::meta::has_parent(std::meta::type_of(m))) {
         if constexpr (std::meta::parent_of(std::meta::type_of(m)) ==
                       std::meta::parent_of(^^std::optional)) {
@@ -618,11 +618,11 @@ void to_xml(const T& value, std::string& result, bool first, const std::string& 
       }
       if (!handled_stl) {
         if constexpr (is_unpack) {
-          to_xml(value.[:m:], body, false, m_name);
+          to_xml(value.[:m:], body, buffer, buffer_2, false, m_name);
         } else if constexpr (iter_names.has_value() &&
                              std::meta::is_class_type(std::meta::type_of(m)) &&
                              std::ranges::range<typename[:std::meta::type_of(m):]>) {
-          body += std::format("<{}>", iter_names->second);
+          std::format_to(std::back_inserter(body), "<{}>", iter_names->first);
 
           if constexpr (is_attribute && std::meta::is_class_type(std::meta::type_of(m)) &&
                         is_unpack && !std::formattable<typename[:std::meta::type_of(m):], char>) {
@@ -637,7 +637,7 @@ void to_xml(const T& value, std::string& result, bool first, const std::string& 
 
           for (const auto& item : value.[:m:]) {
             if constexpr (is_unpack) {
-              to_xml(item, body, false, iter_names->first);
+              to_xml(item, body, buffer, buffer_2, false, iter_names->first);
             } else {
               if constexpr (custom_format.has_value()) {
                 add_child<iter_names->first, *custom_format>(body, item);
@@ -646,7 +646,7 @@ void to_xml(const T& value, std::string& result, bool first, const std::string& 
               }
             }
           }
-          body += std::format("</{}>", iter_names->second);
+          std::format_to(std::back_inserter(body), "</{}>", iter_names->first);
         } else {
           if constexpr (is_attribute) {
             if constexpr (custom_format.has_value()) {
@@ -656,9 +656,6 @@ void to_xml(const T& value, std::string& result, bool first, const std::string& 
             }
           } else {
             if constexpr (is_raw) {
-              std::string buffer [[indeterminate]];
-              buffer.reserve(64);
-
               if constexpr (custom_format.has_value()) {
                 static constexpr auto gen_format =
                     std::define_static_string(std::string("{:") + *custom_format + '}');
@@ -706,7 +703,14 @@ export template <typename T>
   requires(std::is_class_v<T>)
 std::string to_xml(const T& value, bool first = true, const std::string& fixed_name = "") {
   std::string result;
-  to_xml(value, result, first, fixed_name);
+  std::string body;
+  std::string buffer;
+
+  result.reserve(4096);
+  body.reserve(1024);
+  buffer.reserve(256);
+
+  to_xml(value, result, body, buffer, first, fixed_name);
   return result;
 }
 
