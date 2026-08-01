@@ -8,3 +8,5 @@ build/
 !.clang-format
 !.clang-tidy
 !.clangd
+
+CMakeUserPresets.json

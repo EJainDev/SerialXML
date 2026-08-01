@@ -562,7 +562,8 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
     }
   }
 
-  result += std::format("<{}", buffer);
+  std::string name{buffer};
+  result += std::format("<{}", name);
 
   static constexpr auto members = std::define_static_array(
       std::meta::nonstatic_data_members_of(M, std::meta::access_context::current()));
