@@ -393,12 +393,12 @@ void add_attribute(std::string& result, const auto& value) {
 template <auto name>
 consteval auto get_tags() {
   std::string opening_tag;
-  opening_tag.reserve(64);
+  opening_tag.reserve(std::strlen(name) + 2);
   opening_tag += '<';
   opening_tag += name;
   opening_tag += '>';
   std::string closing_tag;
-  closing_tag.reserve(64);
+  closing_tag.reserve(std::strlen(name) + 3);
   closing_tag += "</";
   closing_tag += name;
   closing_tag += '>';
