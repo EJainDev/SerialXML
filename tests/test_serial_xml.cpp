@@ -332,3 +332,17 @@ TEST(Basic, SingleCharIter) {
   ASSERT_EQ(clean_to_xml(obj),
             "<SingleCharIter><vals><v>1</v><v>2</v><v>3</v></vals></SingleCharIter>");
 }
+
+TEST(Iter, StructInRange) {
+  struct StructInRangeInner {
+    int x;
+  };
+  struct Outer {
+    [[= serial_xml::iter{"inner", "inners"}]] std::vector<StructInRangeInner> inners;
+  };
+
+  Outer obj{{{1}, {2}, {3}}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<Outer><inners><inner><x>1</x></inner><inner><x>2</x></inner><inner><x>3</x></inner></"
+            "inners></Outer>");
+}
