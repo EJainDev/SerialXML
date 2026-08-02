@@ -11,7 +11,7 @@ set(CMAKE_CXX_MODULE_STD 1)
 
 project(
   SerialXML
-  VERSION 1.0.0.0
+  VERSION 0.1.0.0
   LANGUAGES CXX)
 
 option(BUILD_TESTS "Enable building of tests" OFF)
