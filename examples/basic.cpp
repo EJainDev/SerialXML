@@ -7,7 +7,7 @@ struct Person {
   std::vector<std::string> preferences;
 };
 
-struct[[= serial_xml::name{"community"}]] Population {
+struct Population {
   [[= serial_xml::iter{"person", "people"}]] std::vector<Person> people;
   std::vector<std::string> services;
 };
@@ -16,7 +16,7 @@ int main() {
   Population community{{Person{3, "Jack", {}}, Person{4, "Molly", {"candy"}}},
                        {"Community Center"}};
 
-  std::print("{}", serial_xml::to_xml(community));
+  std::print("{}", serial_xml::to_xml(community, false, "population"));
 
   return 0;
 }
