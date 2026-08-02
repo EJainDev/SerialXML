@@ -537,6 +537,8 @@ template <typename T>
   requires(std::is_class_v<T>)
 void to_xml(const T& value, std::string& result, std::string& body, std::string& buffer, bool first,
             const std::string& fixed_name = "") {
+  body.clear();
+
   if (first) {
     result = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
   }
@@ -623,7 +625,7 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
         } else if constexpr (iter_names.has_value() &&
                              std::meta::is_class_type(std::meta::type_of(m)) &&
                              std::ranges::range<typename[:std::meta::type_of(m):]>) {
-          std::format_to(std::back_inserter(body), "<{}>", iter_names->first);
+          std::format_to(std::back_inserter(body), "<{}>", iter_names->second);
 
           if constexpr (is_attribute && std::meta::is_class_type(std::meta::type_of(m)) &&
                         is_unpack && !std::formattable<typename[:std::meta::type_of(m):], char>) {
@@ -647,7 +649,7 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
               }
             }
           }
-          std::format_to(std::back_inserter(body), "</{}>", iter_names->first);
+          std::format_to(std::back_inserter(body), "</{}>", iter_names->second);
         } else {
           if constexpr (is_attribute) {
             if constexpr (custom_format.has_value()) {
@@ -657,6 +659,7 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
             }
           } else {
             if constexpr (is_raw) {
+              buffer.clear();
               if constexpr (custom_format.has_value()) {
                 static constexpr auto gen_format =
                     std::define_static_string(std::string("{:") + *custom_format + '}');
