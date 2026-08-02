@@ -311,3 +311,24 @@ TEST(Formatting, StringChild) {
   ASSERT_EQ(clean_to_xml(obj),
             "<FormattedStringChild><text>****text****</text></FormattedStringChild>");
 }
+
+TEST(Basic, IterSTL) {
+  struct IterSTL {
+    [[= serial_xml::iter{"c_val", "container"}]] std::vector<int> values;
+  };
+
+  IterSTL obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<IterSTL><container><c_val>1</c_val><c_val>2</c_val><c_val>3</"
+            "c_val></container></IterSTL>");
+}
+
+TEST(Basic, SingleCharIter) {
+  struct SingleCharIter {
+    [[= serial_xml::iter{"v", "vals"}]] std::vector<int> values;
+  };
+
+  SingleCharIter obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<SingleCharIter><vals><v>1</v><v>2</v><v>3</v></vals></SingleCharIter>");
+}
