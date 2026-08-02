@@ -337,12 +337,13 @@ TEST(Iter, StructInRange) {
   struct StructInRangeInner {
     int x;
   };
-  struct Outer {
+  struct StructInRangeOuter {
     [[= serial_xml::iter{"inner", "inners"}]] std::vector<StructInRangeInner> inners;
   };
 
-  Outer obj{{{1}, {2}, {3}}};
+  StructInRangeOuter obj{{{1}, {2}, {3}}};
   ASSERT_EQ(clean_to_xml(obj),
-            "<Outer><inners><inner><x>1</x></inner><inner><x>2</x></inner><inner><x>3</x></inner></"
-            "inners></Outer>");
+            "<StructInRangeOuter><inners><inner><x>1</x></inner><inner><x>2</x></"
+            "inner><inner><x>3</x></inner></"
+            "inners></StructInRangeOuter>");
 }
