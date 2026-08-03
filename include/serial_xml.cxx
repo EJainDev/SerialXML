@@ -170,17 +170,36 @@ consteval auto get_members() {
       std::meta::nonstatic_data_members_of(container, std::meta::access_context::current()));
 
   std::vector<std::pair<std::meta::info,
-                        structural_tuple::tuple<bool, bool, bool, bool, bool, char const*,
+                        structural_tuple::tuple<bool, bool, bool, char const*,
                                                 std::pair<char const*, char const*>, char const*>>>
       child_annotations;
-  decltype(child_annotations) attribute_annotations;
+  std::vector<std::pair<std::meta::info, structural_tuple::tuple<char const*, char const*>>>
+      attribute_annotations;
 
   template for (constexpr auto m : members) {
     static constexpr auto m_annotations = get_annotations<m>();
+    if constexpr (structural_tuple::get<3>(m_annotations)) {
+      continue;
+    }
+
     if constexpr (structural_tuple::get<0>(m_annotations)) {
-      attribute_annotations.push_back(std::make_pair(m, m_annotations));
+      static_assert(
+          !structural_tuple::get<4>(m_annotations),
+          "Cannot have both serial_xml::attribute and serial_xml::unpack annotations on the same "
+          "member. If you did not add the unpack annotation, add the serial_xml::no_unpack "
+          "annotation to the member. Member name: " +
+              std::string(std::meta::identifier_of(m)));
+
+      attribute_annotations.push_back(
+          std::make_pair(m, structural_tuple::tuple{structural_tuple::get<5>(m_annotations),
+                                                    structural_tuple::get<7>(m_annotations)}));
     } else {
-      child_annotations.push_back(std::make_pair(m, m_annotations));
+      child_annotations.push_back(std::make_pair(
+          m,
+          structural_tuple::tuple{
+              structural_tuple::get<1>(m_annotations), structural_tuple::get<2>(m_annotations),
+              structural_tuple::get<4>(m_annotations), structural_tuple::get<5>(m_annotations),
+              structural_tuple::get<6>(m_annotations), structural_tuple::get<7>(m_annotations)}));
     }
   }
 
@@ -570,7 +589,9 @@ template <typename T>
   requires(std::is_class_v<T>)
 void to_xml(const T& value, std::string& result, std::string& buffer, bool first,
             const std::string& fixed_name = "") {
-  result.clear();
+  if (first) {
+    result += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
+  }
 
   static constexpr auto M = ^^T;
 
@@ -604,19 +625,11 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     static constexpr auto m = m_a.first;
     static constexpr auto m_annotations = m_a.second;
 
-    static constexpr auto is_no_iter = structural_tuple::get<1>(m_annotations);
-    static constexpr auto is_skip = structural_tuple::get<3>(m_annotations);
-    static constexpr auto is_unpack = structural_tuple::get<4>(m_annotations);
+    static constexpr auto custom_format = structural_tuple::get<0>(m_annotations);
 
-    static constexpr auto custom_format = structural_tuple::get<5>(m_annotations);
-
-    static constexpr auto m_name = structural_tuple::get<7>(m_annotations);
+    static constexpr auto m_name = structural_tuple::get<1>(m_annotations);
 
     static constexpr auto view_name = std::string_view(m_name);
-
-    if constexpr (is_skip) {
-      continue;
-    }
 
     if constexpr (!(std::ranges::all_of(
                       view_name,
@@ -625,19 +638,22 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                   is_num(view_name[0]) ||
                   std::ranges::starts_with(view_name, std::string_view("xml"))) {
       throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
-    } else if constexpr (is_unpack) {
-      throw std::logic_error(
-          std::format("Cannot use [[serial_xml::unpack]] and [[serial_xml::attribute]] "
-                      "together. Either remove [[serial_xml::unpack]] or "
-                      "[[serial_xml::attribute]]. If you have not applied "
-                      "[[serial_xml::unpack]], please add [[serial_xml::no_unpack]] to the "
-                      "member with the name '{}'",
-                      view_name));
     } else {
-      if constexpr (custom_format != nullptr) {
-        add_attribute<m_name, *custom_format>(result, value.[:m:]);
-      } else {
-        add_attribute<m_name, std::define_static_string("")>(result, value.[:m:]);
+      bool handled_stl = false;
+      if constexpr (std::meta::has_parent(std::meta::type_of(m)) &&
+                    std::meta::parent_of(std::meta::type_of(m)) ==
+                        std::meta::parent_of(^^std::optional)) {
+        handled_stl = handle_stl<true, true, m_name,
+                                 (custom_format) ? custom_format : std::define_static_string("")>(
+            result, value.[:m:]);
+      }
+
+      if (!handled_stl) {
+        if constexpr (custom_format != nullptr) {
+          add_attribute<m_name, custom_format>(result, value.[:m:]);
+        } else {
+          add_attribute<m_name, std::define_static_string("")>(result, value.[:m:]);
+        }
       }
     }
   }
@@ -651,21 +667,16 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       static constexpr auto m = m_a.first;
       static constexpr auto m_annotations = m_a.second;
 
-      static constexpr auto is_no_iter = structural_tuple::get<1>(m_annotations);
-      static constexpr auto is_raw = structural_tuple::get<2>(m_annotations);
-      static constexpr auto is_skip = structural_tuple::get<3>(m_annotations);
-      static constexpr auto is_unpack = structural_tuple::get<4>(m_annotations);
+      static constexpr auto is_no_iter = structural_tuple::get<0>(m_annotations);
+      static constexpr auto is_raw = structural_tuple::get<1>(m_annotations);
+      static constexpr auto is_unpack = structural_tuple::get<2>(m_annotations);
 
-      static constexpr auto custom_format = structural_tuple::get<5>(m_annotations);
-      static constexpr auto iter_names = structural_tuple::get<6>(m_annotations);
+      static constexpr auto custom_format = structural_tuple::get<3>(m_annotations);
+      static constexpr auto iter_names = structural_tuple::get<4>(m_annotations);
 
-      static constexpr auto m_name = structural_tuple::get<7>(m_annotations);
+      static constexpr auto m_name = structural_tuple::get<5>(m_annotations);
 
       static constexpr auto view_name = std::string_view(m_name);
-
-      if constexpr (is_skip) {
-        continue;
-      }
 
       if constexpr (!(std::ranges::all_of(
                         view_name,

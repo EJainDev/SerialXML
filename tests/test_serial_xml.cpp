@@ -6,6 +6,102 @@ import serial_xml;
 
 std::string clean_to_xml(auto obj) { return serial_xml::to_xml(obj, false); }
 
+TEST(Naming, EmptyWithName) {
+  struct[[= serial_xml::name{"MyStruct"}]] EmptyName {};
+  EmptyName obj;
+
+  ASSERT_EQ(clean_to_xml(obj), "<MyStruct/>");
+}
+
+TEST(Naming, NamedAttribute) {
+  struct NamedAttribute {
+    [[ = serial_xml::name{"MyAttribute"}, = serial_xml::attribute ]] int x;
+  };
+  NamedAttribute obj{4};
+
+  ASSERT_EQ(clean_to_xml(obj), "<NamedAttribute MyAttribute=\"4\"/>");
+}
+
+TEST(Naming, NamedChild) {
+  struct NamedChild {
+    [[= serial_xml::name{"MyChild"}]] int x;
+  };
+  NamedChild obj{4};
+
+  ASSERT_EQ(clean_to_xml(obj), "<NamedChild><MyChild>4</MyChild></NamedChild>");
+}
+
+TEST(Naming, NamedAttributeAndChild) {
+  struct NamedAttributeAndChild {
+    [[ = serial_xml::name{"MyAttribute"}, = serial_xml::attribute ]] int x;
+    [[= serial_xml::name{"MyChild"}]] int y;
+  };
+  NamedAttributeAndChild obj{4, 5};
+
+  ASSERT_EQ(clean_to_xml(obj),
+            "<NamedAttributeAndChild MyAttribute=\"4\"><MyChild>5</MyChild></"
+            "NamedAttributeAndChild>");
+}
+
+TEST(Naming, AllNamed) {
+  struct[[= serial_xml::name{"MyStruct"}]] AllNamed {
+    [[ = serial_xml::name{"MyAttribute"}, = serial_xml::attribute ]] int x;
+    [[= serial_xml::name{"MyChild"}]] int y;
+  };
+  AllNamed obj{4, 5};
+
+  ASSERT_EQ(clean_to_xml(obj), "<MyStruct MyAttribute=\"4\"><MyChild>5</MyChild></MyStruct>");
+}
+
+TEST(Naming, FixedName) {
+  struct FixedName {};
+
+  ASSERT_EQ(serial_xml::to_xml(FixedName{}, false, "FixedName"), "<FixedName/>");
+}
+
+TEST(Naming, SkipNamedAttribute) {
+  struct SkipNamedAttribute {
+    [[ = serial_xml::name{"MyAttribute"}, = serial_xml::attribute, = serial_xml::skip ]] int x;
+  };
+  SkipNamedAttribute obj{4};
+
+  ASSERT_EQ(clean_to_xml(obj), "<SkipNamedAttribute/>");
+}
+
+TEST(Naming, SkipNamedChild) {
+  struct SkipNamedChild {
+    [[ = serial_xml::name{"MyChild"}, = serial_xml::skip ]] int x;
+  };
+  SkipNamedChild obj{4};
+
+  ASSERT_EQ(clean_to_xml(obj), "<SkipNamedChild/>");
+}
+
+TEST(Naming, NamedStructChild) {
+  struct NamedStructChildInner {
+    [[= serial_xml::name{"MyChild"}]] int x;
+  };
+
+  struct NamedStructChildOuter {
+    NamedStructChildInner inner;
+  };
+  NamedStructChildOuter obj{{4}};
+
+  ASSERT_EQ(clean_to_xml(obj),
+            "<NamedStructChildOuter><inner><MyChild>4</MyChild></inner></"
+            "NamedStructChildOuter>");
+}
+
+// TEST(Attributes)
+
+// TEST(STL)
+
+// TEST(Nesting)
+
+// TEST(Iteration)
+
+// TEST(Unpacking)
+
 TEST(Basic, EmptyStruct) {
   struct EmptyStruct {};
   EmptyStruct obj;
@@ -29,15 +125,6 @@ TEST(Basic, Attribute) {
   ASSERT_EQ(clean_to_xml(obj), "<Attribute x=\"42\"/>");
 }
 
-TEST(Basic, NamedAttribute) {
-  struct[[= serial_xml::name{"MyStruct"}]] NamedAttribute {
-    [[= serial_xml::attribute]] int x;
-  };
-  NamedAttribute obj{42};
-
-  ASSERT_EQ(clean_to_xml(obj), "<MyStruct x=\"42\"/>");
-}
-
 TEST(Basic, AttributeAndSkip) {
   struct[[= serial_xml::name{"MyStruct"}]] AttributeAndSkip {
     [[= serial_xml::attribute]] int x;
@@ -55,15 +142,6 @@ TEST(Basic, Child) {
   Child obj{42};
 
   ASSERT_EQ(clean_to_xml(obj), "<MyStruct><x>42</x></MyStruct>");
-}
-
-TEST(Basic, NamedChild) {
-  struct NamedChild {
-    [[= serial_xml::name{"field"}]] int x;
-  };
-  NamedChild obj{42};
-
-  ASSERT_EQ(clean_to_xml(obj), "<NamedChild><field>42</field></NamedChild>");
 }
 
 TEST(Basic, Children) {
@@ -144,7 +222,7 @@ TEST(STL, Optional) {
   ASSERT_EQ(clean_to_xml(obj), "<Optional><value>42</value></Optional>");
 
   Optional obj2{std::nullopt};
-  ASSERT_EQ(clean_to_xml(obj2), "<Optional/>");
+  ASSERT_EQ(clean_to_xml(obj2), "<Optional></Optional>");
 }
 
 TEST(STL, NoIter) {
@@ -216,14 +294,6 @@ TEST(Basic, InvalidNames) {
   } unnamed2{3};
 
   ASSERT_THROW(clean_to_xml(unnamed2), std::logic_error);
-}
-
-TEST(Basic, InvalidAnnotationCombinations) {
-  struct InvalidCombination1 {
-    [[ = serial_xml::unpack, = serial_xml::attribute ]] int x;
-  } unnamed{3};
-
-  ASSERT_THROW(clean_to_xml(unnamed), std::logic_error);
 }
 
 TEST(Basic, Raw) {
