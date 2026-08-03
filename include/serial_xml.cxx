@@ -418,7 +418,7 @@ std::size_t copy_with_escapes(char* buf, std::string_view input, std::size_t pad
 }
 
 template <char const* name, char const* format>
-void add_attribute(std::string& result, const auto& value) {
+void add_attribute(std::string& result, std::string& buffer, const auto& value) {
   using T = std::decay_t<decltype(value)>;
   static constexpr auto m_t = ^^std::decay_t<decltype(value)>;
 
@@ -467,8 +467,7 @@ void add_attribute(std::string& result, const auto& value) {
       });
     }
   } else {
-    std::string buffer;
-    buffer.reserve(256);
+    buffer.clear();
     std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
 
     auto padded_size = get_escape_bitmask(buffer);
@@ -514,7 +513,7 @@ consteval auto get_tags() {
 }
 
 template <char const* name, char const* format>
-void add_child(std::string& result, const auto& value) {
+void add_child(std::string& result, std::string& buffer, const auto& value) {
   using T = typename std::decay_t<decltype(value)>;
   static constexpr auto m_t = ^^T;
 
@@ -565,8 +564,7 @@ void add_child(std::string& result, const auto& value) {
     static constexpr char const* gen_format =
         std::define_static_string(std::string("{:") + format + '}');
 
-    std::string buffer;
-    buffer.reserve(256);
+    buffer.clear();
     std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
 
     auto padded_size = get_escape_bitmask(buffer);
@@ -593,7 +591,7 @@ void add_child(std::string& result, const auto& value) {
 }
 
 template <bool is_attribute, bool is_no_iter, char const* name, char const* format>
-bool handle_stl(std::string& result, const auto& value) {
+bool handle_stl(std::string& result, std::string& buffer, const auto& value) {
   using T = std::decay_t<decltype(value)>;
 
   static constexpr auto m_t = std::meta::template_of(std::meta::dealias(^^T));
@@ -613,7 +611,7 @@ bool handle_stl(std::string& result, const auto& value) {
       static constexpr auto item_m_t = std::meta::dealias(^^decltype(value[0]));
 
       for (const auto& item : value) {
-        add_child<single_name, format>(result, item);
+        add_child<single_name, format>(result, buffer, item);
       }
       result += end;
 
@@ -627,9 +625,9 @@ bool handle_stl(std::string& result, const auto& value) {
     }
 
     if constexpr (is_attribute) {
-      add_attribute<name, format>(result, value.value());
+      add_attribute<name, format>(result, buffer, value.value());
     } else {
-      add_child<name, format>(result, value.value());
+      add_child<name, format>(result, buffer, value.value());
     }
 
     return true;
@@ -696,12 +694,12 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     } else {
       if constexpr (is_std) {
         handle_stl<true, true, m_name,
-                   (custom_format) ? custom_format : std::define_static_string("")>(result,
+                   (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
                                                                                     value.[:m:]);
       } else if constexpr (custom_format != nullptr) {
-        add_attribute<m_name, custom_format>(result, value.[:m:]);
+        add_attribute<m_name, custom_format>(result, buffer, value.[:m:]);
       } else {
-        add_attribute<m_name, std::define_static_string("")>(result, value.[:m:]);
+        add_attribute<m_name, std::define_static_string("")>(result, buffer, value.[:m:]);
       }
     }
   }
@@ -738,8 +736,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       } else {
         if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
           handle_stl<false, is_no_iter, m_name,
-                     (custom_format) ? custom_format : std::define_static_string("")>(result,
-                                                                                      value.[:m:]);
+                     (custom_format) ? custom_format : std::define_static_string("")>(
+              result, buffer, value.[:m:]);
         } else {
           if constexpr (iter_names.first != nullptr &&
                         std::meta::is_class_type(std::meta::type_of(m)) &&
@@ -751,9 +749,9 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                 to_xml(item, result, buffer, false, iter_names.first);
               } else {
                 if constexpr (custom_format != nullptr) {
-                  add_child<iter_names.first, custom_format>(result, item);
+                  add_child<iter_names.first, custom_format>(result, buffer, item);
                 } else {
-                  add_child<iter_names.first, std::define_static_string("")>(result, item);
+                  add_child<iter_names.first, std::define_static_string("")>(result, buffer, item);
                 }
               }
             }
@@ -785,9 +783,9 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                   });
             } else {
               if constexpr (custom_format != nullptr) {
-                add_child<m_name, custom_format>(result, value.[:m:]);
+                add_child<m_name, custom_format>(result, buffer, value.[:m:]);
               } else {
-                add_child<m_name, std::define_static_string("")>(result, value.[:m:]);
+                add_child<m_name, std::define_static_string("")>(result, buffer, value.[:m:]);
               }
             }
           }
