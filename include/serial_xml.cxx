@@ -285,6 +285,12 @@ class Allocator8ByteAligned {
   void deallocate(T* p, const std::size_t n) noexcept { std::free(p); }
 };
 
+template <typename T, typename U>
+constexpr bool operator==(const Allocator8ByteAligned<T>&,
+                          const Allocator8ByteAligned<U>&) noexcept {
+  return true;
+}
+
 // clang-format off
 thread_local std::vector<typename[:get_type<std::simd::vec<char>::size()>():],  Allocator8ByteAligned<typename[:get_type<std::simd::vec<char>::size()>():]>>
     escape_flags;
@@ -822,6 +828,10 @@ std::string to_xml(const T& value, bool first = true, const std::string& fixed_n
   buffer.reserve(256);
 
   to_xml(value, result, buffer, first, fixed_name);
+
+  escape_flags.clear();
+  escape_flags.shrink_to_fit();
+
   return result;
 }
 
