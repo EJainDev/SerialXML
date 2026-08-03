@@ -441,7 +441,7 @@ void add_attribute(std::string& result, const auto& value) {
       });
     }
   } else {
-    std::string buffer [[indeterminate]];
+    std::string buffer;
     buffer.reserve(256);
     std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
 
@@ -540,7 +540,7 @@ void add_child(std::string& result, const auto& value) {
     static constexpr char const* gen_format =
         std::define_static_string(std::string("{:") + format + '}');
 
-    std::string buffer [[indeterminate]];
+    std::string buffer;
     buffer.reserve(256);
     std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
 
