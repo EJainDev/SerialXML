@@ -467,8 +467,12 @@ void add_attribute(std::string& result, std::string& buffer, const auto& value) 
       });
     }
   } else {
-    buffer.clear();
-    std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
+    if constexpr (std::is_same_v<T, std::string> && std::strcmp(format, "") == 0) {
+      buffer = std::ref(value);
+    } else {
+      buffer.clear();
+      std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
+    }
 
     auto padded_size = get_escape_bitmask(buffer);
 
@@ -564,8 +568,12 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
     static constexpr char const* gen_format =
         std::define_static_string(std::string("{:") + format + '}');
 
-    buffer.clear();
-    std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
+    if constexpr (std::is_same_v<T, std::string> && std::strcmp(format, "") == 0) {
+      buffer = std::ref(value);
+    } else {
+      buffer.clear();
+      std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
+    }
 
     auto padded_size = get_escape_bitmask(buffer);
 
@@ -742,7 +750,9 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
           if constexpr (iter_names.first != nullptr &&
                         std::meta::is_class_type(std::meta::type_of(m)) &&
                         std::ranges::range<typename[:std::meta::type_of(m):]>) {
-            std::format_to(std::back_inserter(result), "<{}>", iter_names.second);
+            result.push_back('<');
+            result.append(iter_names.second);
+            result.push_back('>');
 
             for (const auto& item : value.[:m:]) {
               if constexpr (is_unpack) {
@@ -755,7 +765,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                 }
               }
             }
-            std::format_to(std::back_inserter(result), "</{}>", iter_names.second);
+
+            result.append("</");
+            result.append(iter_names.second);
+            result.push_back('>');
           } else if constexpr (is_unpack) {
             to_xml(value.[:m:], result, buffer, false, m_name);
           } else {
@@ -793,7 +806,9 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       }
     }
 
-    std::format_to(std::back_inserter(result), "</{}>", name);
+    result.append("</");
+    result.append(name);
+    result.push_back('>');
   }
 }
 
