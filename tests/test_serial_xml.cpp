@@ -92,9 +92,117 @@ TEST(Naming, NamedStructChild) {
             "NamedStructChildOuter>");
 }
 
-// TEST(Attributes)
+TEST(Attributes, Single) {
+  struct SingleAttribute {
+    [[= serial_xml::attribute]] int x;
+  };
+  SingleAttribute obj{4};
 
-// TEST(STL)
+  ASSERT_EQ(clean_to_xml(obj), "<SingleAttribute x=\"4\"/>");
+}
+
+TEST(Attributes, Multiple) {
+  struct MultipleAttributes {
+    [[= serial_xml::attribute]] int x;
+    [[= serial_xml::attribute]] int y;
+  };
+  MultipleAttributes obj{4, 5};
+
+  ASSERT_EQ(clean_to_xml(obj), "<MultipleAttributes x=\"4\" y=\"5\"/>");
+}
+
+TEST(Attributes, Skip) {
+  struct SkipAttribute {
+    [[ = serial_xml::attribute, = serial_xml::skip ]] int x;
+  };
+  SkipAttribute obj{4};
+
+  ASSERT_EQ(clean_to_xml(obj), "<SkipAttribute/>");
+}
+
+TEST(Attributes, AttributeAndChild) {
+  struct AttributeAndChild {
+    [[= serial_xml::attribute]] int x;
+    int y;
+  };
+  AttributeAndChild obj{4, 5};
+
+  ASSERT_EQ(clean_to_xml(obj), "<AttributeAndChild x=\"4\"><y>5</y></AttributeAndChild>");
+}
+
+TEST(Attributes, AttributeAndSkipChild) {
+  struct AttributeAndSkipChild {
+    [[= serial_xml::attribute]] int x;
+    [[= serial_xml::skip]] int y;
+  };
+  AttributeAndSkipChild obj{4, 5};
+
+  ASSERT_EQ(clean_to_xml(obj), "<AttributeAndSkipChild x=\"4\"/>");
+}
+
+TEST(Attributes, NestedAttribute) {
+  struct NestedAttributeInner {
+    [[= serial_xml::attribute]] int x;
+  };
+
+  struct NestedAttributeOuter {
+    NestedAttributeInner inner;
+  };
+  NestedAttributeOuter obj{{4}};
+
+  ASSERT_EQ(clean_to_xml(obj), "<NestedAttributeOuter><inner x=\"4\"/></NestedAttributeOuter>");
+}
+
+TEST(STL, Vector) {
+  struct Vector {
+    std::vector<int> values;
+  };
+  Vector obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<Vector><values><element>1</element><element>2</"
+            "element><element>3</element>"
+            "</values></Vector>");
+}
+
+TEST(STL, Optional) {
+  struct Optional {
+    std::optional<int> value;
+  };
+  Optional obj{{42}};
+  ASSERT_EQ(clean_to_xml(obj), "<Optional><value>42</value></Optional>");
+
+  Optional obj2{std::nullopt};
+  ASSERT_EQ(clean_to_xml(obj2), "<Optional></Optional>");
+}
+
+TEST(STL, NoIter) {
+  struct NoIter {
+    [[= serial_xml::no_iter]] std::vector<int> values;
+  };
+  NoIter obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj), "<NoIter><values>[1, 2, 3]</values></NoIter>");
+}
+
+TEST(STL, NestedVector) {
+  struct NestedVector {
+    std::vector<std::vector<int>> values;
+  };
+  NestedVector obj{{{1, 2}, {3, 4}}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<NestedVector><values><element>[1, 2]</element><element>[3, "
+            "4]</element></values></NestedVector>");
+}
+
+TEST(STL, OptionalAttribute) {
+  struct OptionalAttribute {
+    [[= serial_xml::attribute]] std::optional<int> value;
+  };
+  OptionalAttribute obj{{42}};
+  ASSERT_EQ(clean_to_xml(obj), "<OptionalAttribute value=\"42\"/>");
+
+  OptionalAttribute obj2{std::nullopt};
+  ASSERT_EQ(clean_to_xml(obj2), "<OptionalAttribute/>");
+}
 
 // TEST(Nesting)
 
@@ -201,46 +309,6 @@ TEST(Nesting, NoUnpack) {
   };
   NoUnpackOuter obj{{42}};
   ASSERT_EQ(clean_to_xml(obj), "<NoUnpackOuter><inner>42</inner></NoUnpackOuter>");
-}
-
-TEST(STL, Vector) {
-  struct Vector {
-    std::vector<int> values;
-  };
-  Vector obj{{1, 2, 3}};
-  ASSERT_EQ(clean_to_xml(obj),
-            "<Vector><values><element>1</element><element>2</"
-            "element><element>3</element>"
-            "</values></Vector>");
-}
-
-TEST(STL, Optional) {
-  struct Optional {
-    std::optional<int> value;
-  };
-  Optional obj{{42}};
-  ASSERT_EQ(clean_to_xml(obj), "<Optional><value>42</value></Optional>");
-
-  Optional obj2{std::nullopt};
-  ASSERT_EQ(clean_to_xml(obj2), "<Optional></Optional>");
-}
-
-TEST(STL, NoIter) {
-  struct NoIter {
-    [[= serial_xml::no_iter]] std::vector<int> values;
-  };
-  NoIter obj{{1, 2, 3}};
-  ASSERT_EQ(clean_to_xml(obj), "<NoIter><values>[1, 2, 3]</values></NoIter>");
-}
-
-TEST(STL, NestedVector) {
-  struct NestedVector {
-    std::vector<std::vector<int>> values;
-  };
-  NestedVector obj{{{1, 2}, {3, 4}}};
-  ASSERT_EQ(clean_to_xml(obj),
-            "<NestedVector><values><element>[1, 2]</element><element>[3, "
-            "4]</element></values></NestedVector>");
 }
 
 template <typename T>

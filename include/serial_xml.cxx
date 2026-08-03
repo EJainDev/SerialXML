@@ -69,6 +69,34 @@ struct iter {
 };
 
 template <std::meta::info m>
+consteval std::meta::info get_namespace() {
+  if constexpr (std::meta::is_namespace(m)) {
+    return m;
+  }
+  if constexpr (std::meta::has_parent(m)) {
+    return get_namespace<std::meta::parent_of(m)>();
+  }
+  return m;
+}
+
+template <std::meta::info m>
+consteval bool is_stl_handled() {
+  if constexpr (get_namespace<m>() == ^^std) {
+    static constexpr auto m_t = std::meta::template_of(std::meta::dealias(m));
+
+    if constexpr (m_t == ^^std::vector || m_t == ^^std::array || m_t == ^^std::inplace_vector ||
+                  m_t == ^^std::deque || m_t == ^^std::forward_list || m_t == ^^std::span ||
+                  m_t == ^^std::valarray || m_t == ^^std::set || m_t == ^^std::unordered_set ||
+                  m_t == ^^std::multiset || m_t == ^^std::unordered_multiset ||
+                  m_t == ^^std::optional) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+template <std::meta::info m>
 consteval auto get_annotations()
     -> structural_tuple::tuple<bool, bool, bool, bool, bool, char const*,
                                std::pair<char const*, char const*>, char const*> {
@@ -79,7 +107,8 @@ consteval auto get_annotations()
   bool is_raw = false;
   bool is_skip = false;
   bool is_unpack = std::meta::is_class_type(std::meta::type_of(m)) &&
-                   !std::formattable<typename[:std::meta::type_of(m):], char>;
+                   !std::formattable<typename[:std::meta::type_of(m):], char> &&
+                   !is_stl_handled<std::meta::type_of(m)>();
 
   std::optional<std::string> custom_format;
   std::optional<std::pair<std::string, std::string>> iter_names;
@@ -622,6 +651,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   static constexpr auto child_annotations = members.second;
 
   template for (constexpr auto m_a : attribute_annotations) {
+    static constexpr auto is_std = is_stl_handled<std::meta::type_of(m_a.first)>();
+
     static constexpr auto m = m_a.first;
     static constexpr auto m_annotations = m_a.second;
 
@@ -639,21 +670,14 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                   std::ranges::starts_with(view_name, std::string_view("xml"))) {
       throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
     } else {
-      bool handled_stl = false;
-      if constexpr (std::meta::has_parent(std::meta::type_of(m)) &&
-                    std::meta::parent_of(std::meta::type_of(m)) ==
-                        std::meta::parent_of(^^std::optional)) {
-        handled_stl = handle_stl<true, true, m_name,
-                                 (custom_format) ? custom_format : std::define_static_string("")>(
-            result, value.[:m:]);
-      }
-
-      if (!handled_stl) {
-        if constexpr (custom_format != nullptr) {
-          add_attribute<m_name, custom_format>(result, value.[:m:]);
-        } else {
-          add_attribute<m_name, std::define_static_string("")>(result, value.[:m:]);
-        }
+      if constexpr (is_std) {
+        handle_stl<true, true, m_name,
+                   (custom_format) ? custom_format : std::define_static_string("")>(result,
+                                                                                    value.[:m:]);
+      } else if constexpr (custom_format != nullptr) {
+        add_attribute<m_name, custom_format>(result, value.[:m:]);
+      } else {
+        add_attribute<m_name, std::define_static_string("")>(result, value.[:m:]);
       }
     }
   }
@@ -664,6 +688,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     result += '>';
 
     template for (constexpr auto m_a : child_annotations) {
+      static constexpr auto is_std = is_stl_handled<std::meta::type_of(m_a.first)>();
+
       static constexpr auto m = m_a.first;
       static constexpr auto m_annotations = m_a.second;
 
@@ -686,18 +712,11 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                     std::ranges::starts_with(view_name, std::string_view("xml"))) {
         throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
       } else {
-        bool handled_stl = false;
-
-        if constexpr (iter_names.first == nullptr && std::meta::has_parent(std::meta::type_of(m))) {
-          if constexpr (std::meta::parent_of(std::meta::type_of(m)) ==
-                        std::meta::parent_of(^^std::optional)) {
-            handled_stl =
-                handle_stl<false, is_no_iter, m_name,
-                           (custom_format) ? custom_format : std::define_static_string("")>(
-                    result, value.[:m:]);
-          }
-        }
-        if (!handled_stl) {
+        if constexpr (iter_names.first == nullptr && is_std) {
+          handle_stl<false, is_no_iter, m_name,
+                     (custom_format) ? custom_format : std::define_static_string("")>(result,
+                                                                                      value.[:m:]);
+        } else {
           if constexpr (iter_names.first != nullptr &&
                         std::meta::is_class_type(std::meta::type_of(m)) &&
                         std::ranges::range<typename[:std::meta::type_of(m):]>) {
