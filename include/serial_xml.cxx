@@ -712,7 +712,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                     std::ranges::starts_with(view_name, std::string_view("xml"))) {
         throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
       } else {
-        if constexpr (iter_names.first == nullptr && is_std) {
+        if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
           handle_stl<false, is_no_iter, m_name,
                      (custom_format) ? custom_format : std::define_static_string("")>(result,
                                                                                       value.[:m:]);

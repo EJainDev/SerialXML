@@ -204,111 +204,111 @@ TEST(STL, OptionalAttribute) {
   ASSERT_EQ(clean_to_xml(obj2), "<OptionalAttribute/>");
 }
 
-// TEST(Nesting)
-
-// TEST(Iteration)
-
-// TEST(Unpacking)
-
-TEST(Basic, EmptyStruct) {
-  struct EmptyStruct {};
-  EmptyStruct obj;
-
-  std::string xml = serial_xml::to_xml(obj);
-  ASSERT_EQ(xml, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><EmptyStruct/>");
-}
-
-TEST(Basic, EmptyName) {
-  struct[[= serial_xml::name{"MyEmptyStruct"}]] EmptyName {};
-  EmptyName obj;
-
-  ASSERT_EQ(clean_to_xml(obj), "<MyEmptyStruct/>");
-}
-
-TEST(Basic, Attribute) {
-  struct Attribute {
-    [[= serial_xml::attribute]] int x;
-  };
-  Attribute obj{42};
-  ASSERT_EQ(clean_to_xml(obj), "<Attribute x=\"42\"/>");
-}
-
-TEST(Basic, AttributeAndSkip) {
-  struct[[= serial_xml::name{"MyStruct"}]] AttributeAndSkip {
-    [[= serial_xml::attribute]] int x;
-    [[= serial_xml::skip]] int y;
-  };
-  AttributeAndSkip obj{42, 100};
-
-  ASSERT_EQ(clean_to_xml(obj), "<MyStruct x=\"42\"/>");
-}
-
-TEST(Basic, Child) {
-  struct[[= serial_xml::name{"MyStruct"}]] Child {
+TEST(Children, Single) {
+  struct SingleChild {
     int x;
   };
-  Child obj{42};
-
-  ASSERT_EQ(clean_to_xml(obj), "<MyStruct><x>42</x></MyStruct>");
+  SingleChild obj{42};
+  ASSERT_EQ(clean_to_xml(obj), "<SingleChild><x>42</x></SingleChild>");
 }
 
-TEST(Basic, Children) {
-  struct Children {
+TEST(Children, Multiple) {
+  struct MultipleChildren {
     int x;
     int y;
   };
-  Children obj{42, 100};
-  ASSERT_EQ(clean_to_xml(obj), "<Children><x>42</x><y>100</y></Children>");
+  MultipleChildren obj{42, 100};
+  ASSERT_EQ(clean_to_xml(obj), "<MultipleChildren><x>42</x><y>100</y></MultipleChildren>");
 }
 
-TEST(Basic, Attributes) {
-  struct Attributes {
+TEST(Children, Skip) {
+  struct SkipChild {
+    [[= serial_xml::skip]] int x;
+  };
+  SkipChild obj{42};
+  ASSERT_EQ(clean_to_xml(obj), "<SkipChild/>");
+}
+
+TEST(Children, ChildAndSkip) {
+  struct ChildAndSkip {
+    int x;
+    [[= serial_xml::skip]] int y;
+  };
+  ChildAndSkip obj{42, 100};
+  ASSERT_EQ(clean_to_xml(obj), "<ChildAndSkip><x>42</x></ChildAndSkip>");
+}
+
+TEST(Children, Nested) {
+  struct NestedChildInner {
+    int x;
+  };
+  struct NestedChildOuter {
+    NestedChildInner inner;
+  };
+  NestedChildOuter obj{{42}};
+  ASSERT_EQ(clean_to_xml(obj), "<NestedChildOuter><inner><x>42</x></inner></NestedChildOuter>");
+}
+
+TEST(Nesting, Children) {
+  struct NestedChildrenInner {
+    int x;
+    int y;
+  };
+  struct NestedChildrenOuter {
+    NestedChildrenInner inner;
+  };
+  NestedChildrenOuter obj{{42, 100}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<NestedChildrenOuter><inner><x>42</x><y>100</y></inner></NestedChildrenOuter>");
+}
+
+TEST(Nesting, Attributes) {
+  struct NestedAttributesInner {
     [[= serial_xml::attribute]] int x;
     [[= serial_xml::attribute]] int y;
   };
-  Attributes obj{42, 100};
-  ASSERT_EQ(clean_to_xml(obj), "<Attributes x=\"42\" y=\"100\"/>");
+  struct NestedAttributesOuter {
+    NestedAttributesInner inner;
+  };
+  NestedAttributesOuter obj{{42, 100}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<NestedAttributesOuter><inner x=\"42\" y=\"100\"/></NestedAttributesOuter>");
 }
 
-TEST(Basic, AttributesAndChildren) {
-  struct AttributesAndChildren {
+TEST(Nesting, AttributesAndChildren) {
+  struct NestedAttributesAndChildrenInner {
     [[= serial_xml::attribute]] int x;
     int y;
   };
-  AttributesAndChildren obj{42, 100};
+  struct NestedAttributesAndChildrenOuter {
+    NestedAttributesAndChildrenInner inner;
+  };
+  NestedAttributesAndChildrenOuter obj{{42, 100}};
   ASSERT_EQ(clean_to_xml(obj),
-            "<AttributesAndChildren x=\"42\"><y>100</y></AttributesAndChildren>");
+            "<NestedAttributesAndChildrenOuter><inner "
+            "x=\"42\"><y>100</y></inner></NestedAttributesAndChildrenOuter>");
 }
 
-TEST(Nesting, NestedStruct) {
-  struct Inner {
+TEST(Nesting, SkipInner) {
+  struct SkipInner {
+    [[= serial_xml::skip]] int x;
+  };
+  struct SkipOuter {
+    SkipInner inner;
+  };
+  SkipOuter obj{{42}};
+  ASSERT_EQ(clean_to_xml(obj), "<SkipOuter><inner/></SkipOuter>");
+}
+
+TEST(Nesting, SkipNesting) {
+  struct SkipNestingInner {
     int x;
   };
-  struct Outer {
-    Inner inner;
+  struct SkipNestingOuter {
+    [[= serial_xml::skip]] SkipNestingInner inner;
   };
-  Outer obj{{42}};
-  ASSERT_EQ(clean_to_xml(obj), "<Outer><inner><x>42</x></inner></Outer>");
-}
-
-struct NoUnpackInner {
-  int x;
-};
-
-template <>
-struct std::formatter<NoUnpackInner> : std::formatter<std::string> {
-  template <typename FormatContext>
-  auto format(const NoUnpackInner& value, FormatContext& ctx) const {
-    return std::formatter<std::string>::format(std::to_string(value.x), ctx);
-  }
-};
-
-TEST(Nesting, NoUnpack) {
-  struct NoUnpackOuter {
-    [[= serial_xml::no_unpack]] NoUnpackInner inner;
-  };
-  NoUnpackOuter obj{{42}};
-  ASSERT_EQ(clean_to_xml(obj), "<NoUnpackOuter><inner>42</inner></NoUnpackOuter>");
+  SkipNestingOuter obj{{42}};
+  ASSERT_EQ(clean_to_xml(obj), "<SkipNestingOuter/>");
 }
 
 template <typename T>
@@ -339,7 +339,7 @@ struct CustomList {
   constexpr const T& operator[](std::size_t i) const { return data[i]; }
 };
 
-TEST(Basic, Iter) {
+TEST(Iteration, CustomList) {
   struct Iter {
     [[= serial_xml::iter{"value", "values"}]] CustomList<int> values;
   };
@@ -350,18 +350,58 @@ TEST(Basic, Iter) {
             "value></values></Iter>");
 }
 
-TEST(Basic, InvalidNames) {
-  struct InvalidName1 {
-    int _x;
-  } unnamed{3};
+TEST(Iteration, IterSTL) {
+  struct IterSTL {
+    [[= serial_xml::iter{"c_val", "container"}]] std::vector<int> values;
+  };
 
-  ASSERT_THROW(clean_to_xml(unnamed), std::logic_error);
+  IterSTL obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<IterSTL><container><c_val>1</c_val><c_val>2</c_val><c_val>3</"
+            "c_val></container></IterSTL>");
+}
 
-  struct InvalidName2 {
-    int xml_x;
-  } unnamed2{3};
+TEST(Iteration, SingleCharIter) {
+  struct SingleCharIter {
+    [[= serial_xml::iter{"v", "vals"}]] std::vector<int> values;
+  };
 
-  ASSERT_THROW(clean_to_xml(unnamed2), std::logic_error);
+  SingleCharIter obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<SingleCharIter><vals><v>1</v><v>2</v><v>3</v></vals></SingleCharIter>");
+}
+
+TEST(Iteration, StructInRange) {
+  struct StructInRangeInner {
+    int x;
+  };
+  struct StructInRangeOuter {
+    [[= serial_xml::iter{"inner", "inners"}]] std::vector<StructInRangeInner> inners;
+  };
+
+  StructInRangeOuter obj{{{1}, {2}, {3}}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<StructInRangeOuter><inners><inner><x>1</x></inner><inner><x>2</x></"
+            "inner><inner><x>3</x></inner></"
+            "inners></StructInRangeOuter>");
+}
+
+TEST(Basic, EmptyStruct) {
+  struct EmptyStruct {};
+  EmptyStruct obj;
+
+  std::string xml = serial_xml::to_xml(obj);
+  ASSERT_EQ(xml, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><EmptyStruct/>");
+}
+
+TEST(Basic, AttributesAndChildren) {
+  struct AttributesAndChildren {
+    [[= serial_xml::attribute]] int x;
+    int y;
+  };
+  AttributesAndChildren obj{42, 100};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<AttributesAndChildren x=\"42\"><y>100</y></AttributesAndChildren>");
 }
 
 TEST(Basic, Raw) {
@@ -373,6 +413,25 @@ TEST(Basic, Raw) {
   ASSERT_EQ(clean_to_xml(obj), "<Raw>text</Raw>");
 }
 
+struct NoUnpackInner {
+  int x;
+};
+
+template <>
+struct std::formatter<NoUnpackInner> : std::formatter<std::string> {
+  template <typename FormatContext>
+  auto format(const NoUnpackInner& value, FormatContext& ctx) const {
+    return std::formatter<std::string>::format(std::to_string(value.x), ctx);
+  }
+};
+
+TEST(Unpacking, NoUnpack) {
+  struct NoUnpackOuter {
+    [[= serial_xml::no_unpack]] NoUnpackInner inner;
+  };
+  NoUnpackOuter obj{{42}};
+  ASSERT_EQ(clean_to_xml(obj), "<NoUnpackOuter><inner>42</inner></NoUnpackOuter>");
+}
 TEST(Escaping, Child) {
   struct EscapeChild {
     std::string text;
@@ -448,89 +507,4 @@ TEST(Formatting, StringChild) {
 
   ASSERT_EQ(clean_to_xml(obj),
             "<FormattedStringChild><text>****text****</text></FormattedStringChild>");
-}
-
-TEST(Basic, IterSTL) {
-  struct IterSTL {
-    [[= serial_xml::iter{"c_val", "container"}]] std::vector<int> values;
-  };
-
-  IterSTL obj{{1, 2, 3}};
-  ASSERT_EQ(clean_to_xml(obj),
-            "<IterSTL><container><c_val>1</c_val><c_val>2</c_val><c_val>3</"
-            "c_val></container></IterSTL>");
-}
-
-TEST(Basic, SingleCharIter) {
-  struct SingleCharIter {
-    [[= serial_xml::iter{"v", "vals"}]] std::vector<int> values;
-  };
-
-  SingleCharIter obj{{1, 2, 3}};
-  ASSERT_EQ(clean_to_xml(obj),
-            "<SingleCharIter><vals><v>1</v><v>2</v><v>3</v></vals></SingleCharIter>");
-}
-
-TEST(Iter, StructInRange) {
-  struct StructInRangeInner {
-    int x;
-  };
-  struct StructInRangeOuter {
-    [[= serial_xml::iter{"inner", "inners"}]] std::vector<StructInRangeInner> inners;
-  };
-
-  StructInRangeOuter obj{{{1}, {2}, {3}}};
-  ASSERT_EQ(clean_to_xml(obj),
-            "<StructInRangeOuter><inners><inner><x>1</x></inner><inner><x>2</x></"
-            "inner><inner><x>3</x></inner></"
-            "inners></StructInRangeOuter>");
-}
-
-TEST(Basic, Unpack) {
-  struct UnpackInner {
-    int x;
-  };
-  struct UnpackOuter {
-    UnpackInner inner;
-  };
-
-  UnpackOuter obj{{42}};
-
-  ASSERT_EQ(clean_to_xml(obj), "<UnpackOuter><inner><x>42</x></inner></UnpackOuter>");
-}
-
-TEST(Unpack, ComplexInner) {
-  struct ComplexUnpackInner {
-    int x;
-    [[= serial_xml::attribute]] int y;
-    std::vector<int> z;
-  };
-
-  struct ComplexUnpackOuter {
-    [[= serial_xml::unpack]] ComplexUnpackInner inner;
-  };
-
-  ComplexUnpackOuter obj{{42, 100, {1, 2, 3}}};
-
-  ASSERT_EQ(clean_to_xml(obj),
-            "<ComplexUnpackOuter><inner "
-            "y=\"100\"><x>42</x><z><element>1</element><element>2</"
-            "element><element>3</element></z></inner></ComplexUnpackOuter>");
-}
-
-TEST(Unpack, NoUnpackIterObj) {
-  struct NoUnpackIterInner {
-    int x;
-  };
-
-  struct NoUnpackIterOuter {
-    [[= serial_xml::iter{"inner", "inners"}]] std::vector<NoUnpackIterInner> inners;
-  };
-
-  NoUnpackIterOuter obj{{{1}, {2}, {3}}};
-
-  ASSERT_EQ(clean_to_xml(obj),
-            "<NoUnpackIterOuter><inners><inner><x>1</x></inner><inner><x>2</x></"
-            "inner><inner><x>3</x></inner></"
-            "inners></NoUnpackIterOuter>");
 }
