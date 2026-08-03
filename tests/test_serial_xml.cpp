@@ -347,3 +347,52 @@ TEST(Iter, StructInRange) {
             "inner><inner><x>3</x></inner></"
             "inners></StructInRangeOuter>");
 }
+
+TEST(Basic, Unpack) {
+  struct UnpackInner {
+    int x;
+  };
+  struct UnpackOuter {
+    UnpackInner inner;
+  };
+
+  UnpackOuter obj{{42}};
+
+  ASSERT_EQ(clean_to_xml(obj), "<UnpackOuter><inner><x>42</x></inner></UnpackOuter>");
+}
+
+TEST(Unpack, ComplexInner) {
+  struct ComplexUnpackInner {
+    int x;
+    [[= serial_xml::attribute]] int y;
+    std::vector<int> z;
+  };
+
+  struct ComplexUnpackOuter {
+    [[= serial_xml::unpack]] ComplexUnpackInner inner;
+  };
+
+  ComplexUnpackOuter obj{{42, 100, {1, 2, 3}}};
+
+  ASSERT_EQ(clean_to_xml(obj),
+            "<ComplexUnpackOuter><inner "
+            "y=\"100\"><x>42</x><z><element>1</element><element>2</"
+            "element><element>3</element></z></inner></ComplexUnpackOuter>");
+}
+
+TEST(Unpack, NoUnpackIterObj) {
+  struct NoUnpackIterInner {
+    int x;
+  };
+
+  struct NoUnpackIterOuter {
+    [[= serial_xml::iter{"inner", "inners"}]] std::vector<NoUnpackIterInner> inners;
+  };
+
+  NoUnpackIterOuter obj{{{1}, {2}, {3}}};
+
+  ASSERT_EQ(clean_to_xml(obj),
+            "<NoUnpackIterOuter><inners><inner><x>1</x></inner><inner><x>2</x></"
+            "inner><inner><x>3</x></inner></"
+            "inners></NoUnpackIterOuter>");
+}
