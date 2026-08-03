@@ -14,6 +14,8 @@ project(
   VERSION 0.1.0.0
   LANGUAGES CXX)
 
+find_package(StructuralTuple REQUIRED)
+
 option(BUILD_TESTS "Enable building of tests" OFF)
 option(BUILD_EXAMPLES "Enable building of examples" ON)
 
@@ -43,6 +45,7 @@ target_sources(
 target_include_directories(
   serial_xml PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                     $<INSTALL_INTERFACE:include>)
+target_link_libraries(serial_xml PUBLIC structural_tuple::structural_tuple)
 target_compile_features(serial_xml PUBLIC cxx_std_26)
 
 # Installation configuration

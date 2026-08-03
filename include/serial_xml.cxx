@@ -7,6 +7,8 @@ export module serial_xml;
 
 import std;
 
+import structural_tuple;
+
 namespace serial_xml {
 export template <std::size_t N>
 struct name {
@@ -67,7 +69,9 @@ struct iter {
 };
 
 template <std::meta::info m>
-consteval auto get_annotations() {
+consteval auto get_annotations()
+    -> structural_tuple::tuple<bool, bool, bool, bool, bool, char const*,
+                               std::pair<char const*, char const*>, char const*> {
   static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
 
   bool is_attribute = false;
@@ -147,19 +151,41 @@ consteval auto get_annotations() {
     }
   }
 
-  return std::tuple{
+  return structural_tuple::tuple{
       is_attribute,
       is_no_iter,
       is_raw,
       is_skip,
       is_unpack,
-      (custom_format.has_value() ? std::optional(std::define_static_string(custom_format.value()))
-                                 : std::optional<char const*>(std::nullopt)),
-      (iter_names.has_value())
-          ? std::optional(std::make_pair(std::define_static_string(iter_names->first),
-                                         std::define_static_string(iter_names->second)))
-          : std::optional<std::pair<char const*, char const*>>(std::nullopt),
+      (custom_format.has_value() ? std::define_static_string(custom_format.value()) : nullptr),
+      (iter_names.has_value()) ? std::make_pair(std::define_static_string(iter_names->first),
+                                                std::define_static_string(iter_names->second))
+                               : std::make_pair<char const*, char const*>(nullptr, nullptr),
       std::define_static_string(name)};
+}
+
+template <std::meta::info container>
+consteval auto get_members() {
+  static constexpr auto members = std::define_static_array(
+      std::meta::nonstatic_data_members_of(container, std::meta::access_context::current()));
+
+  std::vector<std::pair<std::meta::info,
+                        structural_tuple::tuple<bool, bool, bool, bool, bool, char const*,
+                                                std::pair<char const*, char const*>, char const*>>>
+      child_annotations;
+  decltype(child_annotations) attribute_annotations;
+
+  template for (constexpr auto m : members) {
+    static constexpr auto m_annotations = get_annotations<m>();
+    if constexpr (structural_tuple::get<0>(m_annotations)) {
+      attribute_annotations.push_back(std::make_pair(m, m_annotations));
+    } else {
+      child_annotations.push_back(std::make_pair(m, m_annotations));
+    }
+  }
+
+  return std::make_pair(std::define_static_array(attribute_annotations),
+                        std::define_static_array(child_annotations));
 }
 
 template <auto name>
@@ -495,7 +521,7 @@ void add_child(std::string& result, const auto& value) {
 }
 
 template <bool is_attribute, bool is_no_iter, char const* name, char const* format>
-bool handle_stl(std::string& result, std::string& body, const auto& value) {
+bool handle_stl(std::string& result, const auto& value) {
   using T = std::decay_t<decltype(value)>;
 
   static constexpr auto m_t = std::meta::template_of(std::meta::dealias(^^T));
@@ -509,15 +535,15 @@ bool handle_stl(std::string& result, std::string& body, const auto& value) {
       static constexpr auto tags = get_tags<name>();
       static constexpr auto start = std::get<0>(tags);
       static constexpr auto end = std::get<2>(tags);
-      body += start;
+      result += start;
 
       static constexpr auto single_name = std::define_static_string("element");
       static constexpr auto item_m_t = std::meta::dealias(^^decltype(value[0]));
 
       for (const auto& item : value) {
-        add_child<single_name, format>(body, item);
+        add_child<single_name, format>(result, item);
       }
-      body += end;
+      result += end;
 
       return true;
     }
@@ -531,7 +557,7 @@ bool handle_stl(std::string& result, std::string& body, const auto& value) {
     if constexpr (is_attribute) {
       add_attribute<name, format>(result, value.value());
     } else {
-      add_child<name, format>(body, value.value());
+      add_child<name, format>(result, value.value());
     }
 
     return true;
@@ -542,13 +568,9 @@ bool handle_stl(std::string& result, std::string& body, const auto& value) {
 
 template <typename T>
   requires(std::is_class_v<T>)
-void to_xml(const T& value, std::string& result, std::string& body, std::string& buffer, bool first,
+void to_xml(const T& value, std::string& result, std::string& buffer, bool first,
             const std::string& fixed_name = "") {
-  body.clear();
-
-  if (first) {
-    result = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
-  }
+  result.clear();
 
   static constexpr auto M = ^^T;
 
@@ -574,22 +596,21 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
   std::string name{buffer};
   result += std::format("<{}", name);
 
-  static constexpr auto members = std::define_static_array(
-      std::meta::nonstatic_data_members_of(M, std::meta::access_context::current()));
+  static constexpr auto members = get_members<M>();
+  static constexpr auto attribute_annotations = members.first;
+  static constexpr auto child_annotations = members.second;
 
-  template for (constexpr auto m : members) {
-    static constexpr auto m_annotations = get_annotations<m>();
+  template for (constexpr auto m_a : attribute_annotations) {
+    static constexpr auto m = m_a.first;
+    static constexpr auto m_annotations = m_a.second;
 
-    static constexpr auto is_attribute = std::get<0>(m_annotations);
-    static constexpr auto is_no_iter = std::get<1>(m_annotations);
-    static constexpr auto is_raw = std::get<2>(m_annotations);
-    static constexpr auto is_skip = std::get<3>(m_annotations);
-    static constexpr auto is_unpack = std::get<4>(m_annotations);
+    static constexpr auto is_no_iter = structural_tuple::get<1>(m_annotations);
+    static constexpr auto is_skip = structural_tuple::get<3>(m_annotations);
+    static constexpr auto is_unpack = structural_tuple::get<4>(m_annotations);
 
-    static constexpr auto custom_format = std::get<5>(m_annotations);
-    static constexpr auto iter_names = std::get<6>(m_annotations);
+    static constexpr auto custom_format = structural_tuple::get<5>(m_annotations);
 
-    static constexpr auto m_name = std::get<7>(m_annotations);
+    static constexpr auto m_name = structural_tuple::get<7>(m_annotations);
 
     static constexpr auto view_name = std::string_view(m_name);
 
@@ -604,7 +625,7 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
                   is_num(view_name[0]) ||
                   std::ranges::starts_with(view_name, std::string_view("xml"))) {
       throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
-    } else if constexpr (is_unpack && is_attribute) {
+    } else if constexpr (is_unpack) {
       throw std::logic_error(
           std::format("Cannot use [[serial_xml::unpack]] and [[serial_xml::attribute]] "
                       "together. Either remove [[serial_xml::unpack]] or "
@@ -613,62 +634,84 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
                       "member with the name '{}'",
                       view_name));
     } else {
-      bool handled_stl = false;
-
-      std::string buffer_2 [[indeterminate]];
-
-      if constexpr (!iter_names.has_value() && std::meta::has_parent(std::meta::type_of(m))) {
-        if constexpr (std::meta::parent_of(std::meta::type_of(m)) ==
-                      std::meta::parent_of(^^std::optional)) {
-          handled_stl =
-              handle_stl<is_attribute, is_no_iter, m_name,
-                         (custom_format) ? *custom_format : std::define_static_string("")>(
-                  result, body, value.[:m:]);
-        }
+      if constexpr (custom_format != nullptr) {
+        add_attribute<m_name, *custom_format>(result, value.[:m:]);
+      } else {
+        add_attribute<m_name, std::define_static_string("")>(result, value.[:m:]);
       }
-      if (!handled_stl) {
-        if constexpr (iter_names.has_value() && std::meta::is_class_type(std::meta::type_of(m)) &&
-                      std::ranges::range<typename[:std::meta::type_of(m):]>) {
-          std::format_to(std::back_inserter(body), "<{}>", iter_names->second);
+    }
+  }
 
-          if constexpr (is_attribute && std::meta::is_class_type(std::meta::type_of(m)) &&
-                        is_unpack && !std::formattable<typename[:std::meta::type_of(m):], char>) {
-            throw std::logic_error(
-                "Cannot use [[serial_xml::attribute]] on a class "
-                "type (i.e. a type that is broken down into its "
-                "members) without [[serial_xml::no_unpack]]. Either add "
-                "[[serial_xml::no_unpack]], remove [[serial_xml::attribute]], "
-                "or "
-                "add support for std::format.");
+  if constexpr (child_annotations.size() == 0) {
+    result += "/>";
+  } else {
+    result += '>';
+
+    template for (constexpr auto m_a : child_annotations) {
+      static constexpr auto m = m_a.first;
+      static constexpr auto m_annotations = m_a.second;
+
+      static constexpr auto is_no_iter = structural_tuple::get<1>(m_annotations);
+      static constexpr auto is_raw = structural_tuple::get<2>(m_annotations);
+      static constexpr auto is_skip = structural_tuple::get<3>(m_annotations);
+      static constexpr auto is_unpack = structural_tuple::get<4>(m_annotations);
+
+      static constexpr auto custom_format = structural_tuple::get<5>(m_annotations);
+      static constexpr auto iter_names = structural_tuple::get<6>(m_annotations);
+
+      static constexpr auto m_name = structural_tuple::get<7>(m_annotations);
+
+      static constexpr auto view_name = std::string_view(m_name);
+
+      if constexpr (is_skip) {
+        continue;
+      }
+
+      if constexpr (!(std::ranges::all_of(
+                        view_name,
+                        [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; })) ||
+                    view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
+                    is_num(view_name[0]) ||
+                    std::ranges::starts_with(view_name, std::string_view("xml"))) {
+        throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
+      } else {
+        bool handled_stl = false;
+
+        if constexpr (iter_names.first == nullptr && std::meta::has_parent(std::meta::type_of(m))) {
+          if constexpr (std::meta::parent_of(std::meta::type_of(m)) ==
+                        std::meta::parent_of(^^std::optional)) {
+            handled_stl =
+                handle_stl<false, is_no_iter, m_name,
+                           (custom_format) ? custom_format : std::define_static_string("")>(
+                    result, value.[:m:]);
           }
+        }
+        if (!handled_stl) {
+          if constexpr (iter_names.first != nullptr &&
+                        std::meta::is_class_type(std::meta::type_of(m)) &&
+                        std::ranges::range<typename[:std::meta::type_of(m):]>) {
+            std::format_to(std::back_inserter(result), "<{}>", iter_names.second);
 
-          for (const auto& item : value.[:m:]) {
-            if constexpr (is_unpack) {
-              to_xml(item, body, buffer, buffer_2, false, iter_names->first);
-            } else {
-              if constexpr (custom_format.has_value()) {
-                add_child<iter_names->first, *custom_format>(body, item);
+            for (const auto& item : value.[:m:]) {
+              if constexpr (is_unpack) {
+                to_xml(item, result, buffer, false, iter_names.first);
               } else {
-                add_child<iter_names->first, std::define_static_string("")>(body, item);
+                if constexpr (custom_format != nullptr) {
+                  add_child<iter_names.first, custom_format>(result, item);
+                } else {
+                  add_child<iter_names.first, std::define_static_string("")>(result, item);
+                }
               }
             }
-          }
-          std::format_to(std::back_inserter(body), "</{}>", iter_names->second);
-        } else if constexpr (is_unpack) {
-          to_xml(value.[:m:], body, buffer, buffer_2, false, m_name);
-        } else {
-          if constexpr (is_attribute) {
-            if constexpr (custom_format.has_value()) {
-              add_attribute<m_name, *custom_format>(result, value.[:m:]);
-            } else {
-              add_attribute<m_name, std::define_static_string("")>(result, value.[:m:]);
-            }
+            std::format_to(std::back_inserter(result), "</{}>", iter_names.second);
+          } else if constexpr (is_unpack) {
+            to_xml(value.[:m:], result, buffer, false, m_name);
           } else {
             if constexpr (is_raw) {
               buffer.clear();
-              if constexpr (custom_format.has_value()) {
+              if constexpr (custom_format != nullptr) {
                 static constexpr auto gen_format =
-                    std::define_static_string(std::string("{:") + *custom_format + '}');
+                    std::define_static_string(std::string("{:") + custom_format + '}');
                 std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
                                value.[:m:]);
               } else {
@@ -680,8 +723,8 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
               auto num_escapes =
                   count_escapes(std::get<0>(escape_result), std::get<1>(escape_result));
 
-              const auto original_size = body.size();
-              body.resize_and_overwrite(
+              const auto original_size = result.size();
+              result.resize_and_overwrite(
                   original_size + buffer.size() + (num_escapes * 5), [&](char* buf, std::size_t) {
                     buf += original_size;
 
@@ -690,22 +733,18 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
                                                              std::get<1>(escape_result));
                   });
             } else {
-              if constexpr (custom_format.has_value()) {
-                add_child<m_name, *custom_format>(body, value.[:m:]);
+              if constexpr (custom_format != nullptr) {
+                add_child<m_name, custom_format>(result, value.[:m:]);
               } else {
-                add_child<m_name, std::define_static_string("")>(body, value.[:m:]);
+                add_child<m_name, std::define_static_string("")>(result, value.[:m:]);
               }
             }
           }
         }
       }
     }
-  }
 
-  if (body.empty()) {
-    result += "/>";
-  } else {
-    result += std::format(">{}</{}>", body, name);
+    result += std::format("</{}>", name);
   }
 }
 
@@ -713,14 +752,12 @@ export template <typename T>
   requires(std::is_class_v<T>)
 std::string to_xml(const T& value, bool first = true, const std::string& fixed_name = "") {
   std::string result;
-  std::string body;
   std::string buffer;
 
   result.reserve(4096);
-  body.reserve(1024);
   buffer.reserve(256);
 
-  to_xml(value, result, body, buffer, first, fixed_name);
+  to_xml(value, result, buffer, first, fixed_name);
   return result;
 }
 
