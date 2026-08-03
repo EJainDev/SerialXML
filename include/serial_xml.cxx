@@ -264,7 +264,33 @@ consteval std::meta::info get_type() {
   return ^^uint64_t;
 }
 
-auto get_escape_bitmask(std::string_view input) {
+template <typename T>
+class Allocator8ByteAligned {
+ public:
+  using value_type = T;
+
+  Allocator8ByteAligned() noexcept = default;
+
+  template <typename U>
+  Allocator8ByteAligned(const Allocator8ByteAligned<U>&) noexcept {}
+
+  [[nodiscard]] T* allocate(const std::size_t n) {
+    if (n == 0) {
+      return nullptr;
+    }
+
+    return static_cast<T*>(std::aligned_alloc(8, n * sizeof(T)));
+  }
+
+  void deallocate(T* p, const std::size_t n) noexcept { std::free(p); }
+};
+
+// clang-format off
+thread_local std::vector<typename[:get_type<std::simd::vec<char>::size()>():],  Allocator8ByteAligned<typename[:get_type<std::simd::vec<char>::size()>():]>>
+    escape_flags;
+// clang-format on
+
+std::size_t get_escape_bitmask(std::string_view input) {
   using simd_t = std::simd::vec<char>;
 
   std::size_t padded_size [[indeterminate]];
@@ -275,9 +301,8 @@ auto get_escape_bitmask(std::string_view input) {
   }
 
   using FlagsT = typename[:get_type<simd_t::size()>():];
+  escape_flags.resize(std::max(sizeof(uint64_t) / sizeof(FlagsT), padded_size));
 
-  auto escape_flags =
-      std::make_unique<FlagsT[]>(std::max(sizeof(uint64_t) / sizeof(FlagsT), padded_size));
   std::size_t i{0};
 
   static constexpr auto idx_seq = std::make_index_sequence<simd_t::size()>{};
@@ -314,12 +339,13 @@ auto get_escape_bitmask(std::string_view input) {
     template for (constexpr auto j : idx_seq) { escape_flags[0] |= mask[static_cast<int>(j)] << j; }
   }
 
-  return std::tuple{std::move(escape_flags), padded_size};
+  return padded_size;
 }
 
-template <typename T>
-int count_escapes(const std::unique_ptr<T[]>& escape_flags, int padded_size) {
-  auto* escape_flags_ptr = reinterpret_cast<uint64_t*>(escape_flags.get());
+int count_escapes(std::size_t padded_size) {
+  using T = std::ranges::range_value_t<decltype(escape_flags)>;
+
+  auto* escape_flags_ptr = reinterpret_cast<uint64_t*>(escape_flags.data());
   int count = 0;
   for (int i = 0;
        i <
@@ -330,12 +356,12 @@ int count_escapes(const std::unique_ptr<T[]>& escape_flags, int padded_size) {
   return count;
 }
 
-template <typename T>
-std::size_t copy_with_escapes(char* buf, std::string_view input,
-                              const std::unique_ptr<T[]>& escape_flags, std::size_t padded_size) {
+std::size_t copy_with_escapes(char* buf, std::string_view input, std::size_t padded_size) {
+  using T = std::ranges::range_value_t<decltype(escape_flags)>;
+
   const char* original_buf = buf;
 
-  auto* escape_flags_ptr = reinterpret_cast<std::uint64_t*>(escape_flags.get());
+  auto* escape_flags_ptr = reinterpret_cast<std::uint64_t*>(escape_flags.data());
 
   for (std::size_t i = 0;
        i <
@@ -445,9 +471,9 @@ void add_attribute(std::string& result, const auto& value) {
     buffer.reserve(256);
     std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
 
-    auto escape_result = get_escape_bitmask(buffer);
+    auto padded_size = get_escape_bitmask(buffer);
 
-    auto num_escapes = count_escapes(std::get<0>(escape_result), std::get<1>(escape_result));
+    auto num_escapes = count_escapes(padded_size);
 
     const auto original_size = result.size();
 
@@ -461,8 +487,7 @@ void add_attribute(std::string& result, const auto& value) {
 
                                   buf += prefix_size;
 
-                                  buf += copy_with_escapes(buf, buffer, std::get<0>(escape_result),
-                                                           std::get<1>(escape_result));
+                                  buf += copy_with_escapes(buf, buffer, padded_size);
 
                                   *buf = '"';
 
@@ -544,9 +569,9 @@ void add_child(std::string& result, const auto& value) {
     buffer.reserve(256);
     std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
 
-    auto escape_result = get_escape_bitmask(buffer);
+    auto padded_size = get_escape_bitmask(buffer);
 
-    auto num_escapes = count_escapes(std::get<0>(escape_result), std::get<1>(escape_result));
+    auto num_escapes = count_escapes(padded_size);
 
     result.resize_and_overwrite(original_size + combined_size + buffer.size() + (num_escapes * 5),
                                 [&](char* buf, std::size_t) {
@@ -558,8 +583,7 @@ void add_child(std::string& result, const auto& value) {
 
                                   buf += opening_tag_size;
 
-                                  buf += copy_with_escapes(buf, buffer, std::get<0>(escape_result),
-                                                           std::get<1>(escape_result));
+                                  buf += copy_with_escapes(buf, buffer, padded_size);
 
                                   std::memcpy(buf, closing_tag, closing_tag_size);
 
@@ -644,7 +668,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   }
 
   std::string name{buffer};
-  result += std::format("<{}", name);
+  std::format_to(std::back_inserter(result), "<{}", name);
 
   static constexpr auto members = get_members<M>();
   static constexpr auto attribute_annotations = members.first;
@@ -748,19 +772,16 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                 std::format_to(std::back_inserter(buffer), "{}", value.[:m:]);
               }
 
-              auto escape_result = get_escape_bitmask(buffer);
+              auto padded_size = get_escape_bitmask(buffer);
 
-              auto num_escapes =
-                  count_escapes(std::get<0>(escape_result), std::get<1>(escape_result));
+              auto num_escapes = count_escapes(padded_size);
 
               const auto original_size = result.size();
               result.resize_and_overwrite(
                   original_size + buffer.size() + (num_escapes * 5), [&](char* buf, std::size_t) {
                     buf += original_size;
 
-                    return original_size + copy_with_escapes(buf, buffer,
-                                                             std::get<0>(escape_result),
-                                                             std::get<1>(escape_result));
+                    return original_size + copy_with_escapes(buf, buffer, padded_size);
                   });
             } else {
               if constexpr (custom_format != nullptr) {
@@ -774,7 +795,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       }
     }
 
-    result += std::format("</{}>", name);
+    std::format_to(std::back_inserter(result), "</{}>", name);
   }
 }
 
