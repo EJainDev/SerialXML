@@ -131,6 +131,13 @@ consteval auto get_annotations() {
     }
   }
 
+  if constexpr (std::ranges::range<typename[:std::meta::type_of(m):]>) {
+    if (iter_names.has_value()) {
+      using m_t = std::ranges::range_value_t<typename[:std::meta::type_of(m):]>;
+      is_unpack = std::is_class_v<m_t> && !std::formattable<m_t, char>;
+    }
+  }
+
   if (name.empty()) {
     if constexpr (std::meta::has_identifier(m)) {
       static constexpr auto temp_name = std::meta::identifier_of(m);
@@ -620,11 +627,8 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
         }
       }
       if (!handled_stl) {
-        if constexpr (is_unpack) {
-          to_xml(value.[:m:], body, buffer, buffer_2, false, m_name);
-        } else if constexpr (iter_names.has_value() &&
-                             std::meta::is_class_type(std::meta::type_of(m)) &&
-                             std::ranges::range<typename[:std::meta::type_of(m):]>) {
+        if constexpr (iter_names.has_value() && std::meta::is_class_type(std::meta::type_of(m)) &&
+                      std::ranges::range<typename[:std::meta::type_of(m):]>) {
           std::format_to(std::back_inserter(body), "<{}>", iter_names->second);
 
           if constexpr (is_attribute && std::meta::is_class_type(std::meta::type_of(m)) &&
@@ -650,6 +654,8 @@ void to_xml(const T& value, std::string& result, std::string& body, std::string&
             }
           }
           std::format_to(std::back_inserter(body), "</{}>", iter_names->second);
+        } else if constexpr (is_unpack) {
+          to_xml(value.[:m:], body, buffer, buffer_2, false, m_name);
         } else {
           if constexpr (is_attribute) {
             if constexpr (custom_format.has_value()) {
