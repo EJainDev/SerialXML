@@ -314,10 +314,8 @@ auto get_escape_bitmask(std::string_view input) -> std::size_t {
   static constexpr auto idx_seq = std::make_index_sequence<simd_t::size()>{};
 
   if (static_cast<std::size_t>(simd_t::size()) <= input.size()) {
-    for (i = 0; i < input.size() - simd_t::size(); i += simd_t::size()) {
-      if (i + simd_t::size() > input.size()) {
-        break;
-      }
+    const auto loop_end = input.size() - simd_t::size();
+    for (i = 0; i < loop_end; i += simd_t::size()) {
       auto v = std::simd::unchecked_load<simd_t>(input.data() + i, simd_t::size());
 
       auto mask = (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
