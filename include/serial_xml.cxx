@@ -249,7 +249,7 @@ consteval auto get_attribute_prefix() {
 }
 
 template <std::size_t simd_size>
-consteval std::meta::info get_type() {
+consteval auto get_type() -> std::meta::info {
   static_assert(simd_size >= 8, "SIMD mask size must be at least 8 elements.");
 
   if constexpr (simd_size <= 8) {
@@ -296,7 +296,7 @@ thread_local std::vector<typename[:get_type<std::simd::vec<char>::size()>():],  
     escape_flags;
 // clang-format on
 
-std::size_t get_escape_bitmask(std::string_view input) {
+auto get_escape_bitmask(std::string_view input) -> std::size_t {
   using simd_t = std::simd::vec<char>;
 
   std::size_t padded_size [[indeterminate]];
@@ -314,7 +314,7 @@ std::size_t get_escape_bitmask(std::string_view input) {
   static constexpr auto idx_seq = std::make_index_sequence<simd_t::size()>{};
 
   if (static_cast<std::size_t>(simd_t::size()) <= input.size()) {
-    for (i = 0; i < input.size(); i += simd_t::size()) {
+    for (i = 0; i < input.size() - simd_t::size(); i += simd_t::size()) {
       if (i + simd_t::size() > input.size()) {
         break;
       }
@@ -348,7 +348,7 @@ std::size_t get_escape_bitmask(std::string_view input) {
   return padded_size;
 }
 
-int count_escapes(std::size_t padded_size) {
+auto count_escapes(std::size_t padded_size) -> int {
   using T = std::ranges::range_value_t<decltype(escape_flags)>;
 
   auto* escape_flags_ptr = reinterpret_cast<uint64_t*>(escape_flags.data());
@@ -362,7 +362,7 @@ int count_escapes(std::size_t padded_size) {
   return count;
 }
 
-std::size_t copy_with_escapes(char* buf, std::string_view input, std::size_t padded_size) {
+auto copy_with_escapes(char* buf, std::string_view input, std::size_t padded_size) -> std::size_t {
   using T = std::ranges::range_value_t<decltype(escape_flags)>;
 
   const char* original_buf = buf;
@@ -605,7 +605,7 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
 }
 
 template <bool is_attribute, bool is_no_iter, char const* name, char const* format>
-bool handle_stl(std::string& result, std::string& buffer, const auto& value) {
+auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> bool {
   using T = std::decay_t<decltype(value)>;
 
   static constexpr auto m_t = std::meta::template_of(std::meta::dealias(^^T));
@@ -820,7 +820,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
 export template <typename T>
   requires(std::is_class_v<T>)
-std::string to_xml(const T& value, bool first = true, const std::string& fixed_name = "") {
+auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "") -> std::string {
   std::string result;
   std::string buffer;
 
@@ -835,7 +835,7 @@ std::string to_xml(const T& value, bool first = true, const std::string& fixed_n
   return result;
 }
 
-export std::string prettify(const std::string& xml) {
+export auto prettify(const std::string& xml) -> std::string {
   std::string result;
   result.reserve(static_cast<std::size_t>(static_cast<double>(xml.size()) * 1.5));
 
