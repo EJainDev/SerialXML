@@ -22,25 +22,25 @@ struct name {
 };
 
 struct skip_ {};
-export constexpr const skip_ skip;
+export constexpr skip_ skip;
 
 struct attribute_ {};
-export constexpr const attribute_ attribute;
+export constexpr attribute_ attribute;
 
 struct no_unpack_ {};
-export constexpr const no_unpack_ no_unpack;
+export constexpr no_unpack_ no_unpack;
 
 struct unpack_ {};
-export constexpr const unpack_ unpack;
+export constexpr unpack_ unpack;
 
 struct no_iter_ {};
-export constexpr const no_iter_ no_iter;
+export constexpr no_iter_ no_iter;
 
 struct raw_ {};
-export constexpr const raw_ raw;
+export constexpr raw_ raw;
 
 struct cdata_ {};
-export constexpr const cdata_ cdata;
+export constexpr cdata_ cdata;
 
 constexpr bool is_alpha(const char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
