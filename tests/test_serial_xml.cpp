@@ -193,6 +193,17 @@ TEST(STL, NestedVector) {
             "4]</element></values></NestedVector>");
 }
 
+TEST(STL, RawIter) {
+  struct STLRawIter {
+    [[= serial_xml::raw]] std::vector<int> values;
+  };
+
+  STLRawIter obj{{1, 2, 3}};
+  ASSERT_EQ(
+      clean_to_xml(obj),
+      "<STLRawIter><element>1</element><element>2</element><element>3</element></STLRawIter>");
+}
+
 TEST(STL, OptionalAttribute) {
   struct OptionalAttribute {
     [[= serial_xml::attribute]] std::optional<int> value;
@@ -384,6 +395,16 @@ TEST(Iteration, StructInRange) {
             "<StructInRangeOuter><inners><inner><x>1</x></inner><inner><x>2</x></"
             "inner><inner><x>3</x></inner></"
             "inners></StructInRangeOuter>");
+}
+
+TEST(Iteration, RawIter) {
+  struct RawIter {
+    [[ = serial_xml::raw, = serial_xml::iter{"value", "values"} ]] std::vector<int> values;
+  };
+
+  RawIter obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<RawIter><value>1</value><value>2</value><value>3</value></RawIter>");
 }
 
 TEST(Basic, EmptyStruct) {
