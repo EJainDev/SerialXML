@@ -413,6 +413,15 @@ TEST(Basic, Raw) {
   ASSERT_EQ(clean_to_xml(obj), "<Raw>text</Raw>");
 }
 
+TEST(Basic, CData) {
+  struct CData {
+    [[= serial_xml::cdata]] std::string text;
+  };
+
+  CData obj{"text<empty> & stuff"};
+  ASSERT_EQ(clean_to_xml(obj), "<CData><![CDATA[text<empty> & stuff]]></CData>");
+}
+
 struct NoUnpackInner {
   int x;
 };
