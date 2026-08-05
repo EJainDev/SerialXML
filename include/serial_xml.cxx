@@ -101,7 +101,7 @@ consteval bool is_stl_handled() {
 
 template <std::meta::info m>
 consteval auto get_annotations()
-    -> structural_tuple::tuple<bool, bool, bool, bool, bool, char const*,
+    -> structural_tuple::tuple<bool, bool, bool, bool, bool, bool, char const*,
                                std::pair<char const*, char const*>, char const*> {
   static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
 
@@ -188,7 +188,7 @@ consteval auto get_annotations()
 
   return structural_tuple::tuple{
       is_attribute,
-      c_data,
+      is_cdata,
       is_no_iter,
       is_raw,
       is_skip,
@@ -206,7 +206,7 @@ consteval auto get_members() {
       std::meta::nonstatic_data_members_of(container, std::meta::access_context::current()));
 
   std::vector<std::pair<std::meta::info,
-                        structural_tuple::tuple<bool, bool, bool, char const*,
+                        structural_tuple::tuple<bool, bool, bool, bool, char const*,
                                                 std::pair<char const*, char const*>, char const*>>>
       child_annotations;
   std::vector<std::pair<std::meta::info, structural_tuple::tuple<char const*, char const*>>>
@@ -214,13 +214,13 @@ consteval auto get_members() {
 
   template for (constexpr auto m : members) {
     static constexpr auto m_annotations = get_annotations<m>();
-    if constexpr (structural_tuple::get<3>(m_annotations)) {
+    if constexpr (structural_tuple::get<4>(m_annotations)) {
       continue;
     }
 
     if constexpr (structural_tuple::get<0>(m_annotations)) {
       static_assert(
-          !structural_tuple::get<4>(m_annotations),
+          !structural_tuple::get<5>(m_annotations),
           "Cannot have both serial_xml::attribute and serial_xml::unpack annotations on the same "
           "member. If you did not add the unpack annotation, add the serial_xml::no_unpack "
           "annotation to the member. Member name: " +
@@ -726,7 +726,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
     } else {
       if constexpr (is_std) {
-        handle_stl<true, true, m_name,
+        handle_stl<true, false, true, m_name,
                    (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
                                                                                     value.[:m:]);
       } else if constexpr (custom_format != nullptr) {
