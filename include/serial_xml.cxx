@@ -89,9 +89,7 @@ consteval bool is_stl_handled() {
 
     if constexpr (m_t == ^^std::vector || m_t == ^^std::array || m_t == ^^std::inplace_vector ||
                   m_t == ^^std::deque || m_t == ^^std::forward_list || m_t == ^^std::span ||
-                  m_t == ^^std::valarray || m_t == ^^std::set || m_t == ^^std::unordered_set ||
-                  m_t == ^^std::multiset || m_t == ^^std::unordered_multiset ||
-                  m_t == ^^std::optional) {
+                  m_t == ^^std::valarray || m_t == ^^std::optional) {
       return true;
     }
   }
@@ -634,8 +632,7 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
     if constexpr (!is_no_iter &&
                   (m_t == ^^std::vector || m_t == ^^std::array || m_t == ^^std::inplace_vector ||
                    m_t == ^^std::deque || m_t == ^^std::forward_list || m_t == ^^std::span ||
-                   m_t == ^^std::valarray || m_t == ^^std::set || m_t == ^^std::unordered_set ||
-                   m_t == ^^std::multiset || m_t == ^^std::unordered_multiset)) {
+                   m_t == ^^std::valarray)) {
       static constexpr auto tags = get_tags<name>();
       static constexpr auto start = std::get<0>(tags);
       static constexpr auto end = std::get<2>(tags);
