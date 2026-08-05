@@ -623,7 +623,8 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
   }
 }
 
-template <bool is_attribute, bool is_cdata, bool is_no_iter, char const* name, char const* format>
+template <bool is_attribute, bool is_cdata, bool is_no_iter, bool is_raw, char const* name,
+          char const* format>
 auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> bool {
   using T = std::decay_t<decltype(value)>;
 
@@ -638,7 +639,9 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
       static constexpr auto tags = get_tags<name>();
       static constexpr auto start = std::get<0>(tags);
       static constexpr auto end = std::get<2>(tags);
-      result += start;
+      if constexpr (!is_raw) {
+        result += start;
+      }
 
       static constexpr auto single_name = std::define_static_string("element");
       static constexpr auto item_m_t = std::meta::dealias(^^decltype(value[0]));
@@ -646,7 +649,10 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
       for (const auto& item : value) {
         add_child<single_name, is_cdata, format>(result, buffer, item);
       }
-      result += end;
+
+      if constexpr (!is_raw) {
+        result += end;
+      }
 
       return true;
     }
@@ -726,7 +732,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
     } else {
       if constexpr (is_std) {
-        handle_stl<true, false, true, m_name,
+        handle_stl<true, false, true, false, m_name,
                    (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
                                                                                     value.[:m:]);
       } else if constexpr (custom_format != nullptr) {
@@ -769,16 +775,18 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
         throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
       } else {
         if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
-          handle_stl<false, is_cdata, is_no_iter, m_name,
+          handle_stl<false, is_cdata, is_no_iter, is_raw, m_name,
                      (custom_format) ? custom_format : std::define_static_string("")>(
               result, buffer, value.[:m:]);
         } else {
           if constexpr (iter_names.first != nullptr &&
                         std::meta::is_class_type(std::meta::type_of(m)) &&
                         std::ranges::range<typename[:std::meta::type_of(m):]>) {
-            result.push_back('<');
-            result.append(iter_names.second);
-            result.push_back('>');
+            if constexpr (!is_raw) {
+              result.push_back('<');
+              result.append(iter_names.second);
+              result.push_back('>');
+            }
 
             for (const auto& item : value.[:m:]) {
               if constexpr (is_unpack) {
@@ -793,9 +801,11 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
               }
             }
 
-            result.append("</");
-            result.append(iter_names.second);
-            result.push_back('>');
+            if constexpr (!is_raw) {
+              result.append("</");
+              result.append(iter_names.second);
+              result.push_back('>');
+            }
           } else if constexpr (is_unpack) {
             to_xml(value.[:m:], result, buffer, false, m_name);
           } else {
