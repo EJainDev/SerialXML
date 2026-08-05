@@ -164,6 +164,22 @@ TEST(STL, Vector) {
             "</values></Vector>");
 }
 
+TEST(STL, EmptyVector) {
+  struct EmptyVector {
+    std::vector<int> values;
+  };
+  EmptyVector obj{{}};
+  ASSERT_EQ(clean_to_xml(obj), "<EmptyVector><values/></EmptyVector>");
+}
+
+TEST(STL, ExcludeOnEmpty) {
+  struct ExcludeOnEmpty {
+    [[= serial_xml::exclude_on_empty]] std::vector<int> values;
+  };
+  ExcludeOnEmpty obj{{}};
+  ASSERT_EQ(clean_to_xml(obj), "<ExcludeOnEmpty/>");
+}
+
 TEST(STL, Optional) {
   struct Optional {
     std::optional<int> value;
@@ -172,7 +188,7 @@ TEST(STL, Optional) {
   ASSERT_EQ(clean_to_xml(obj), "<Optional><value>42</value></Optional>");
 
   Optional obj2{std::nullopt};
-  ASSERT_EQ(clean_to_xml(obj2), "<Optional></Optional>");
+  ASSERT_EQ(clean_to_xml(obj2), "<Optional/>");
 }
 
 TEST(STL, NoIter) {
