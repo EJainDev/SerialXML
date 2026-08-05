@@ -39,6 +39,9 @@ export constexpr const no_iter_ no_iter;
 struct raw_ {};
 export constexpr const raw_ raw;
 
+struct cdata_ {};
+export constexpr const cdata_ cdata;
+
 constexpr bool is_alpha(const char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
 constexpr bool is_num(const char c) { return (c >= '0' && c <= '9'); }
@@ -103,6 +106,7 @@ consteval auto get_annotations()
   static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
 
   bool is_attribute = false;
+  bool is_cdata = false;
   bool is_no_iter = false;
   bool is_raw = false;
   bool is_skip = false;
@@ -119,6 +123,8 @@ consteval auto get_annotations()
     static constexpr auto a_t = std::meta::type_of(a);
     if constexpr (a_t == ^^decltype(::serial_xml::attribute)) {
       is_attribute = true;
+    } else if constexpr (a_t == ^^decltype(::serial_xml::cdata)) {
+      is_cdata = true;
     } else if constexpr (a_t == ^^decltype(::serial_xml::no_iter)) {
       is_no_iter = true;
     } else if constexpr (a_t == ^^decltype(::serial_xml::raw)) {
@@ -182,6 +188,7 @@ consteval auto get_annotations()
 
   return structural_tuple::tuple{
       is_attribute,
+      c_data,
       is_no_iter,
       is_raw,
       is_skip,
@@ -220,15 +227,15 @@ consteval auto get_members() {
               std::string(std::meta::identifier_of(m)));
 
       attribute_annotations.push_back(
-          std::make_pair(m, structural_tuple::tuple{structural_tuple::get<5>(m_annotations),
-                                                    structural_tuple::get<7>(m_annotations)}));
+          std::make_pair(m, structural_tuple::tuple{structural_tuple::get<6>(m_annotations),
+                                                    structural_tuple::get<8>(m_annotations)}));
     } else {
       child_annotations.push_back(std::make_pair(
-          m,
-          structural_tuple::tuple{
-              structural_tuple::get<1>(m_annotations), structural_tuple::get<2>(m_annotations),
-              structural_tuple::get<4>(m_annotations), structural_tuple::get<5>(m_annotations),
-              structural_tuple::get<6>(m_annotations), structural_tuple::get<7>(m_annotations)}));
+          m, structural_tuple::tuple{
+                 structural_tuple::get<1>(m_annotations), structural_tuple::get<2>(m_annotations),
+                 structural_tuple::get<3>(m_annotations), structural_tuple::get<5>(m_annotations),
+                 structural_tuple::get<6>(m_annotations), structural_tuple::get<7>(m_annotations),
+                 structural_tuple::get<8>(m_annotations)}));
     }
   }
 
@@ -520,7 +527,7 @@ consteval auto get_tags() {
                     std::define_static_string(closing_tag), closing_tag.size()};
 }
 
-template <char const* name, char const* format>
+template <char const* name, bool is_cdata, char const* format>
 void add_child(std::string& result, std::string& buffer, const auto& value) {
   using T = typename std::decay_t<decltype(value)>;
   static constexpr auto m_t = ^^T;
@@ -568,6 +575,20 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
         return original_size + (combined_size + (ptr - buf));
       });
     }
+  } else if constexpr (is_cdata) {
+    if constexpr (std::strcmp(format, "") == 0 &&
+                  (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>)) {
+      result += "<![CDATA[";
+      result += value;
+      result += "]]>";
+    } else {
+      static constexpr char const* gen_format =
+          std::define_static_string(std::string("{:") + format + '}');
+
+      result += "<![CDATA[";
+      std::format_to(std::back_inserter(result), std::dynamic_format(gen_format), value);
+      result += "]]>";
+    }
   } else {
     static constexpr char const* gen_format =
         std::define_static_string(std::string("{:") + format + '}');
@@ -602,7 +623,7 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
   }
 }
 
-template <bool is_attribute, bool is_no_iter, char const* name, char const* format>
+template <bool is_attribute, bool is_cdata, bool is_no_iter, char const* name, char const* format>
 auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> bool {
   using T = std::decay_t<decltype(value)>;
 
@@ -623,7 +644,7 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
       static constexpr auto item_m_t = std::meta::dealias(^^decltype(value[0]));
 
       for (const auto& item : value) {
-        add_child<single_name, format>(result, buffer, item);
+        add_child<single_name, is_cdata, format>(result, buffer, item);
       }
       result += end;
 
@@ -639,7 +660,7 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
     if constexpr (is_attribute) {
       add_attribute<name, format>(result, buffer, value.value());
     } else {
-      add_child<name, format>(result, buffer, value.value());
+      add_child<name, is_cdata, format>(result, buffer, value.value());
     }
 
     return true;
@@ -727,14 +748,15 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       static constexpr auto m = m_a.first;
       static constexpr auto m_annotations = m_a.second;
 
-      static constexpr auto is_no_iter = structural_tuple::get<0>(m_annotations);
-      static constexpr auto is_raw = structural_tuple::get<1>(m_annotations);
-      static constexpr auto is_unpack = structural_tuple::get<2>(m_annotations);
+      static constexpr auto is_cdata = structural_tuple::get<0>(m_annotations);
+      static constexpr auto is_no_iter = structural_tuple::get<1>(m_annotations);
+      static constexpr auto is_raw = structural_tuple::get<2>(m_annotations);
+      static constexpr auto is_unpack = structural_tuple::get<3>(m_annotations);
 
-      static constexpr auto custom_format = structural_tuple::get<3>(m_annotations);
-      static constexpr auto iter_names = structural_tuple::get<4>(m_annotations);
+      static constexpr auto custom_format = structural_tuple::get<4>(m_annotations);
+      static constexpr auto iter_names = structural_tuple::get<5>(m_annotations);
 
-      static constexpr auto m_name = structural_tuple::get<5>(m_annotations);
+      static constexpr auto m_name = structural_tuple::get<6>(m_annotations);
 
       static constexpr auto view_name = std::string_view(m_name);
 
@@ -747,7 +769,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
         throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
       } else {
         if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
-          handle_stl<false, is_no_iter, m_name,
+          handle_stl<false, is_cdata, is_no_iter, m_name,
                      (custom_format) ? custom_format : std::define_static_string("")>(
               result, buffer, value.[:m:]);
         } else {
@@ -763,9 +785,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                 to_xml(item, result, buffer, false, iter_names.first);
               } else {
                 if constexpr (custom_format != nullptr) {
-                  add_child<iter_names.first, custom_format>(result, buffer, item);
+                  add_child<iter_names.first, is_cdata, custom_format>(result, buffer, item);
                 } else {
-                  add_child<iter_names.first, std::define_static_string("")>(result, buffer, item);
+                  add_child<iter_names.first, is_cdata, std::define_static_string("")>(
+                      result, buffer, item);
                 }
               }
             }
@@ -800,9 +823,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                   });
             } else {
               if constexpr (custom_format != nullptr) {
-                add_child<m_name, custom_format>(result, buffer, value.[:m:]);
+                add_child<m_name, is_cdata, custom_format>(result, buffer, value.[:m:]);
               } else {
-                add_child<m_name, std::define_static_string("")>(result, buffer, value.[:m:]);
+                add_child<m_name, is_cdata, std::define_static_string("")>(result, buffer,
+                                                                           value.[:m:]);
               }
             }
           }
