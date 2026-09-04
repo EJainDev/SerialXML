@@ -1,0 +1,25 @@
+{
+    "name": "C++ GCC 16.2",
+
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools-extension-pack",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "cheshirekow.cmake-format"
+            ]
+        }
+    },
+
+    "remoteUser": "root",
+
+    "containerEnv": {
+        "CC": "gcc",
+        "CXX": "g++"
+    }
+}

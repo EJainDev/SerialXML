@@ -2,6 +2,7 @@
 build/
 
 !.github
+!.devcontainer
 
 !.gitignore
 !.gitattributes
