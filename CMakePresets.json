@@ -28,6 +28,13 @@
             }
         },
         {
+            "name": "debug-test-gcc",
+            "inherits": "debug-gcc",
+            "cacheVariables": {
+                "BUILD_TESTS": true
+            }
+        },
+        {
             "name": "release-gcc",
             "displayName": "Release (GCC 16 & Ninja)",
             "inherits": "base-gcc",
@@ -35,6 +42,13 @@
             "binaryDir": "${sourceDir}/build/release",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "release-test-gcc",
+            "inherits": "release-gcc",
+            "cacheVariables": {
+                "BUILD_TESTS": true
             }
         }
     ],
@@ -45,9 +59,19 @@
             "configurePreset": "debug-gcc"
         },
         {
+            "name": "build-debug-test",
+            "displayName": "Build Debug with Tests",
+            "configurePreset": "debug-test-gcc"
+        },
+        {
             "name": "build-release",
             "displayName": "Build Release",
             "configurePreset": "release-gcc"
+        },
+        {
+            "name": "build-release-test",
+            "displayName": "Build Release with Tests",
+            "configurePreset": "release-test-gcc"
         }
     ]
 }
