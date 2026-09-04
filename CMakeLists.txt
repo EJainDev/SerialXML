@@ -18,6 +18,7 @@ find_package(StructuralTuple REQUIRED)
 
 option(BUILD_TESTS "Enable building of tests" OFF)
 option(BUILD_EXAMPLES "Enable building of examples" ON)
+option(BUILD_BENCHMARKS "Enable building of benchmarks" OFF)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -88,4 +89,8 @@ endif()
 
 if(BUILD_TESTS)
   add_subdirectory(tests)
+endif()
+
+if(BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
 endif()

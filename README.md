@@ -74,6 +74,35 @@ Compiler | GCC 16.1 | C++26 SIMD, Reflection, and more |
 CMake | 4.3 | Change `std` experiment key for lower versions |
 C++ Standard | 26 | SIMD, Reflection, Annotations |
 
+## Benchmarks
+
+This library is the *fastest* XML serialization library. It is 8.3x faster than `boost_xml` and 1.9x faster than `pugixml` for struct to XML serialization.
+
+Benchmarks on my machine (single Intel Core 7 240H with 5600 MT/s DDR5):
+```
+serial_xml:
+  iterations: 100000
+  total:      82.208 ms
+  per iter:   822.085 ns
+
+boost_xml:
+  iterations: 100000
+  total:      789.931 ms
+  per iter:   7899.305 ns
+
+cereal_xml:
+  iterations: 100000
+  total:      794.559 ms
+  per iter:   7945.590 ns
+
+pugixml:
+  iterations: 100000
+  total:      158.521 ms
+  per iter:   1585.212 ns
+```
+
+To build benchmarks and do independent evaluation, add the `-D BUILD_BENCHMARKS=ON` flag when configuring CMake.
+
 ## Annotations
 
 This library is annotation driven, which means that most customization points are exposed via C++26 annotations. The reason behind this design choice is to create consistency and visually associate the output structure to the definition.
