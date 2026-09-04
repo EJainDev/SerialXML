@@ -7,6 +7,6 @@ struct Person {
 };
 
 int main() {
-  std::print("{}", serial_xml::to_xml(Person{3, "pizza"}));
-  std::print("\n");
+  const auto xml = serial_xml::to_xml(Person{3, "pizza"});
+  std::print("{}\n", serial_xml::prettify(xml));
 }

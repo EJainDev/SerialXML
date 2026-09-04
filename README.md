@@ -6,9 +6,24 @@
 ![CMake 4.3+](https://img.shields.io/badge/CMake-4.3%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-lightgray)
 
-> Reflection based XML serialization for C++26 -- call `to_xml` on any object for a string version
+> Reflection based XML serialization for C++26 -- call `to_xml` on any object for a string serialization
 
 SerialXML is a C++26 reflection based serialization library for XML. Behaviour is configurable via annotations on object members and object type declarations (`class/struct`). Errors are all compile time using `static_assert` messages so any invalid XML combination is caught at compile time.
+
+## Table of Contents
+* [Quick Start](#quick-start)
+* [Installation](#installation)
+  * [FetchContent](#cmake-fetchcontent-recommended)
+  * [Source](#install-from-source)
+  * [Requirements](#requirements)
+* [Benchmarks](#benchmarks)
+* [Annotations](#annotations)
+  * [Common Confusion Points](#common-confusion-points)
+  * [Configuring `to_xml`](#configuring-to_xml)
+  * [The `prettify` function](#the-prettify-function)
+* [Examples](#examples)
+* [Contributing](#contributing)
+* [License](#license)
 
 ## Quick Start
 
@@ -162,6 +177,35 @@ As you can see, there are some parameters for configuration"
 ### The `prettify` function
 
 A simple function to prettify (add indentation and newlines) the generated XML output. The only parameter is the output and it returns a new string with the output.
+
+## Examples
+
+The [`examples`](examples) directory contains small, standalone programs for each
+major SerialXML feature. Examples are built by default; configure the project and
+run an executable from the build directory, for example:
+
+```bash
+cmake --preset "release-gcc-16"
+cmake --build build
+./build/examples/hello_world
+```
+
+Set `-D BUILD_EXAMPLES=OFF` when configuring CMake to omit them from your build.
+
+| Example | Demonstrates |
+| ------- | ------------ |
+| [`hello_world.cpp`](examples/hello_world.cpp) | A minimal struct-to-XML serialization. |
+| [`attributes.cpp`](examples/attributes.cpp) | Emitting members as XML attributes. |
+| [`named_tags.cpp`](examples/named_tags.cpp) | Naming root elements, attributes, and child tags. |
+| [`skip_members.cpp`](examples/skip_members.cpp) | Excluding members from the output. |
+| [`nested_structs.cpp`](examples/nested_structs.cpp) | Recursive serialization of nested structs and nested attributes. |
+| [`stl_containers.cpp`](examples/stl_containers.cpp) | Automatic container iteration, `exclude_on_empty`, and `no_iter`. |
+| [`iteration.cpp`](examples/iteration.cpp) | Custom element and container names for ranges, including ranges of structs. |
+| [`optional_types.cpp`](examples/optional_types.cpp) | Omitting empty `std::optional` values and serializing present values. |
+| [`raw_cdata.cpp`](examples/raw_cdata.cpp) | Raw text and CDATA output. |
+| [`format_specifiers.cpp`](examples/format_specifiers.cpp) | Passing format specifications through to `std::format`. |
+| [`escaping.cpp`](examples/escaping.cpp) | Escaping XML-special characters in children, attributes, and raw text. |
+| [`advanced_mixed.cpp`](examples/advanced_mixed.cpp) | A combined example using attributes, named tags, nesting, iteration, and escaping. |
 
 ## Contributing
 
