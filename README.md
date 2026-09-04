@@ -144,6 +144,25 @@ This is the complete list of annotations:
     1. CData
 1. `format` is ignored for unpacked or iterated members
 
+### Configuring `to_xml`
+
+The function signature of `to_xml` is the following:
+
+```
+template <typename T>
+  requires(std::is_class_v<T>)
+auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "") -> std::string;
+```
+
+As you can see, there are some parameters for configuration"
+- `value` -- the instance of the class to serialize
+- `first` -- a bool indicating whether to insert the XML header defining the file as XML. `true` means yes
+- `fixed_name` -- a custom name to specify for the instance being serialized. Overrides `name` annotation.
+
+### The `prettify` function
+
+A simple function to prettify (add indentation and newlines) the generated XML output. The only parameter is the output and it returns a new string with the output.
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on the process for submitting pull requests to us.
