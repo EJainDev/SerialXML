@@ -108,7 +108,7 @@ consteval auto get_annotations()
 
   bool is_attribute = false;
   bool is_cdata = false;
-  bool is_no_iter = false;
+  bool is_no_iter = !is_stl_handled<std::meta::type_of(m)>();
   bool is_raw = false;
   bool is_skip = false;
   bool is_unpack = std::meta::is_class_type(std::meta::type_of(m)) &&
@@ -145,6 +145,12 @@ consteval auto get_annotations()
         static constexpr auto format_value = std::meta::extract<typename[:a_t:]>(a);
         custom_format = std::string(format_value.value);
       } else if constexpr (std::meta::template_of(a_t) == ^^::serial_xml::iter) {
+        if constexpr (!std::ranges::range<typename[:std::meta::type_of(m):]>) {
+          throw std::logic_error(
+              "serial_xml::iter annotation can only be applied to range types. Member name: " +
+              std::string(std::meta::identifier_of(m)));
+        }
+
         static constexpr auto iter_value = std::meta::extract<typename[:a_t:]>(a);
 
         std::string multiple_name;
@@ -223,18 +229,49 @@ consteval auto get_members() {
 
   template for (constexpr auto m : members) {
     static constexpr auto m_annotations = get_annotations<m>();
+
+    // Invalid attribute combinations
+    static_assert(
+        !(structural_tuple::get<0>(m_annotations) && structural_tuple::get<5>(m_annotations)),
+        "Cannot have both serial_xml::attribute and serial_xml::unpack annotations on the "
+        "same member. If you did not add the unpack annotation, add the "
+        "serial_xml::no_unpack annotation to the member. Member name: " +
+            std::string(std::meta::identifier_of(m)));
+
+    static_assert(
+        !(structural_tuple::get<0>(m_annotations) && structural_tuple::get<1>(m_annotations)),
+        "Cannot have both serial_xml::attribute and serial_xml::cdata annotations on the "
+        "same member. Member name: " +
+            std::string(std::meta::identifier_of(m)));
+
+    static_assert(
+        !(structural_tuple::get<0>(m_annotations) && structural_tuple::get<3>(m_annotations)),
+        "Cannot have both serial_xml::attribute and serial_xml::raw annotations on the "
+        "same member. Member name: " +
+            std::string(std::meta::identifier_of(m)));
+
+    // Invalid child combinations
+    static_assert(
+        !(structural_tuple::get<1>(m_annotations) && structural_tuple::get<3>(m_annotations)),
+        "Cannot have both serial_xml::cdata and serial_xml::raw annotations on the "
+        "same member. Member name: " +
+            std::string(std::meta::identifier_of(m)));
+    static_assert(
+        !(structural_tuple::get<1>(m_annotations) && structural_tuple::get<5>(m_annotations)),
+        "Cannot have both serial_xml::cdata and serial_xml::unpack annotations on the "
+        "same member. Member name: " +
+            std::string(std::meta::identifier_of(m)));
+    static_assert(
+        !(structural_tuple::get<1>(m_annotations) && !structural_tuple::get<2>(m_annotations)),
+        "Cannot have both the serial_xml::cdata annotation and iteration on the "
+        "same member. Member name: " +
+            std::string(std::meta::identifier_of(m)));
+
     if constexpr (structural_tuple::get<4>(m_annotations)) {
       continue;
     }
 
     if constexpr (structural_tuple::get<0>(m_annotations)) {
-      static_assert(
-          !structural_tuple::get<5>(m_annotations),
-          "Cannot have both serial_xml::attribute and serial_xml::unpack annotations on the same "
-          "member. If you did not add the unpack annotation, add the serial_xml::no_unpack "
-          "annotation to the member. Member name: " +
-              std::string(std::meta::identifier_of(m)));
-
       attribute_annotations.push_back(
           std::make_pair(m, structural_tuple::tuple{structural_tuple::get<6>(m_annotations),
                                                     structural_tuple::get<8>(m_annotations)}));
@@ -752,23 +789,21 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
     static constexpr auto view_name = std::string_view(m_name);
 
-    if constexpr (!(std::ranges::all_of(
-                      view_name,
-                      [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; })) ||
-                  view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
-                  is_num(view_name[0]) ||
-                  std::ranges::starts_with(view_name, std::string_view("xml"))) {
-      throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
+    static_assert(
+        std::ranges::all_of(
+            view_name, [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
+            !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
+              is_num(view_name[0]) || std::ranges::starts_with(view_name, std::string_view("xml"))),
+        std::string("Invalid XML name: '") + std::string(view_name) + "'");
+
+    if constexpr (is_std) {
+      handle_stl<true, false, true, false, false, false, m_name,
+                 (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
+                                                                                  value.[:m:]);
+    } else if constexpr (custom_format != nullptr) {
+      add_attribute<m_name, custom_format>(result, buffer, value.[:m:]);
     } else {
-      if constexpr (is_std) {
-        handle_stl<true, false, true, false, false, false, m_name,
-                   (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
-                                                                                    value.[:m:]);
-      } else if constexpr (custom_format != nullptr) {
-        add_attribute<m_name, custom_format>(result, buffer, value.[:m:]);
-      } else {
-        add_attribute<m_name, std::define_static_string("")>(result, buffer, value.[:m:]);
-      }
+      add_attribute<m_name, std::define_static_string("")>(result, buffer, value.[:m:]);
     }
   }
 
@@ -797,78 +832,77 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
       static constexpr auto view_name = std::string_view(m_name);
 
-      if constexpr (!(std::ranges::all_of(
-                        view_name,
-                        [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; })) ||
-                    view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
-                    is_num(view_name[0]) ||
-                    std::ranges::starts_with(view_name, std::string_view("xml"))) {
-        throw std::logic_error(std::format("Invalid XML name: '{}'", view_name));
+      static_assert(
+          std::ranges::all_of(
+              view_name, [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
+              !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
+                is_num(view_name[0]) ||
+                std::ranges::starts_with(view_name, std::string_view("xml"))),
+          std::string("Invalid XML name: '") + std::string(view_name) + "'");
+
+      if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
+        handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
+                   (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
+                                                                                    value.[:m:]);
       } else {
-        if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
-          handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
-                     (custom_format) ? custom_format : std::define_static_string("")>(
-              result, buffer, value.[:m:]);
-        } else {
-          if constexpr (iter_names.first != nullptr &&
-                        std::meta::is_class_type(std::meta::type_of(m)) &&
-                        std::ranges::range<typename[:std::meta::type_of(m):]>) {
-            if constexpr (!is_raw) {
-              result.push_back('<');
-              result.append(iter_names.second);
-              result.push_back('>');
-            }
+        if constexpr (iter_names.first != nullptr &&
+                      std::meta::is_class_type(std::meta::type_of(m)) &&
+                      std::ranges::range<typename[:std::meta::type_of(m):]>) {
+          if constexpr (!is_raw) {
+            result.push_back('<');
+            result.append(iter_names.second);
+            result.push_back('>');
+          }
 
-            for (const auto& item : value.[:m:]) {
-              if constexpr (is_unpack) {
-                to_xml(item, result, buffer, false, iter_names.first);
-              } else {
-                if constexpr (custom_format != nullptr) {
-                  add_child<iter_names.first, is_cdata, custom_format>(result, buffer, item);
-                } else {
-                  add_child<iter_names.first, is_cdata, std::define_static_string("")>(
-                      result, buffer, item);
-                }
-              }
-            }
-
-            if constexpr (!is_raw) {
-              result.append("</");
-              result.append(iter_names.second);
-              result.push_back('>');
-            }
-          } else if constexpr (is_unpack) {
-            to_xml(value.[:m:], result, buffer, false, m_name);
-          } else {
-            if constexpr (is_raw) {
-              buffer.clear();
-              if constexpr (custom_format != nullptr) {
-                static constexpr auto gen_format =
-                    std::define_static_string(std::string("{:") + custom_format + '}');
-                std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
-                               value.[:m:]);
-              } else {
-                std::format_to(std::back_inserter(buffer), "{}", value.[:m:]);
-              }
-
-              auto padded_size = get_escape_bitmask(buffer);
-
-              auto num_escapes = count_escapes(padded_size);
-
-              const auto original_size = result.size();
-              result.resize_and_overwrite(
-                  original_size + buffer.size() + (num_escapes * 5), [&](char* buf, std::size_t) {
-                    buf += original_size;
-
-                    return original_size + copy_with_escapes(buf, buffer, padded_size);
-                  });
+          for (const auto& item : value.[:m:]) {
+            if constexpr (is_unpack) {
+              to_xml(item, result, buffer, false, iter_names.first);
             } else {
               if constexpr (custom_format != nullptr) {
-                add_child<m_name, is_cdata, custom_format>(result, buffer, value.[:m:]);
+                add_child<iter_names.first, is_cdata, custom_format>(result, buffer, item);
               } else {
-                add_child<m_name, is_cdata, std::define_static_string("")>(result, buffer,
-                                                                           value.[:m:]);
+                add_child<iter_names.first, is_cdata, std::define_static_string("")>(result, buffer,
+                                                                                     item);
               }
+            }
+          }
+
+          if constexpr (!is_raw) {
+            result.append("</");
+            result.append(iter_names.second);
+            result.push_back('>');
+          }
+        } else if constexpr (is_unpack) {
+          to_xml(value.[:m:], result, buffer, false, m_name);
+        } else {
+          if constexpr (is_raw) {
+            buffer.clear();
+            if constexpr (custom_format != nullptr) {
+              static constexpr auto gen_format =
+                  std::define_static_string(std::string("{:") + custom_format + '}');
+              std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
+                             value.[:m:]);
+            } else {
+              std::format_to(std::back_inserter(buffer), "{}", value.[:m:]);
+            }
+
+            auto padded_size = get_escape_bitmask(buffer);
+
+            auto num_escapes = count_escapes(padded_size);
+
+            const auto original_size = result.size();
+            result.resize_and_overwrite(
+                original_size + buffer.size() + (num_escapes * 5), [&](char* buf, std::size_t) {
+                  buf += original_size;
+
+                  return original_size + copy_with_escapes(buf, buffer, padded_size);
+                });
+          } else {
+            if constexpr (custom_format != nullptr) {
+              add_child<m_name, is_cdata, custom_format>(result, buffer, value.[:m:]);
+            } else {
+              add_child<m_name, is_cdata, std::define_static_string("")>(result, buffer,
+                                                                         value.[:m:]);
             }
           }
         }
