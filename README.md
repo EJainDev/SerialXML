@@ -1,6 +1,6 @@
 # SerialXML
 
-![Banner](./docs/images/SerialXML.png)
+![Banner](./assets/SerialXML.png)
 
 ![C++26](https://img.shields.io/badge/C%2B%2B-26-blue)
 ![CMake 4.3+](https://img.shields.io/badge/CMake-4.3%2B-orange)
