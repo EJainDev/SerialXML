@@ -8,7 +8,7 @@
 
 > Reflection based XML serialization for C++26 -- call `to_xml` on any object for a string version
 
-SerialXML is a C++26 reflection based serialization library for XML. Behaviour is configurable via annotations on object members and object type declarations (`class/struct`).
+SerialXML is a C++26 reflection based serialization library for XML. Behaviour is configurable via annotations on object members and object type declarations (`class/struct`). Errors are all compile time using `static_assert` messages so any invalid XML combination is caught at compile time.
 
 ## Quick Start
 
@@ -66,7 +66,7 @@ find_package(SerialXML REQUIRED)
 target_link_libraries(my_app PRIVATE serial_xml::serial_xml)
 ```
 
-## Requirements
+### Requirements
 
 | Component | Min Version | Notes |
 | --------- | ----------- | ----- |
@@ -74,24 +74,46 @@ Compiler | GCC 16.1 | C++26 SIMD, Reflection, and more |
 CMake | 4.3 | Change `std` experiment key for lower versions |
 C++ Standard | 26 | SIMD, Reflection, Annotations |
 
-## Features
+## Annotations
 
-You can use the various annotations provided by the library to control how your struct is parsed. The best part is that it's all compile time. No runtime overhead. Any object that supports `std::format` is formattable immediately.
+This library is annotation driven, which means that most customization points are exposed via C++26 annotations. The reason behind this design choice is to create consistency and visually associate the output structure to the definition.
 
-- `to_xml` -- The main function to serialize your struct. The optional second parameter is a boolean dictating whether to add the XML 1.0 declaration line: `<?xml version=\"1.0\" encoding=\"UTF-8\"?>`. Passing `true` (the default) adds it and pass `false` to disable it.
-- `[[=attribute]]` -- Mark a struct member as an attribute instead of a child.
-- `[[=raw]]` -- Mark a struct member to be emitted as raw text instead of being surrounded by closing tags inside the body of the struct.
+By default, all members are treated as children of the parent struct with closing tags the same as the name of the member. However, if a struct is not formattable, it by default is unpacked. Many STL ranges and the `std::optional` container are also handled by default. A `std::optional` member is omitted if it does not contain a value.
+
+This is the complete list of annotations:
+- `[[=attribute]]` -- Mark a struct member as a XML attribute instead of a child.
+- `[[=raw]]` -- Mark a struct member to be emitted as raw text instead of being surrounded by closing tags with the same name as the member.
 - `[[=skip]]` -- Don't include this struct member in the generated XML output.
 - `[[=name{"custom_name"}]]` -- Specify the name of this attribute or child tag to be something other than the name of the member. Note: You can also specify this on the struct to control its closing tag (eg. generate `person` instead of `Person` for `struct Person` with `[[=name{"person"}]]`).
-- `[[=unpack]]` -- Instead of calling `std::format` on the member object, generate an enclosing XML tag for each of its children.
+- `[[=unpack]]` -- Instead of calling `std::format` on the member object, generate an enclosing XML tag for it and serialize its members as well.
 - `[[=no_unpack]]` -- Call `std::format` on the member object instead of breaking it down into its children. Opposite of `unpack`.
 - `[[=iter{a, b}]]` -- For classes satisfying `std::ranges::range`, iterate through each member instead of directly calling `std::format`. The first (optional) parameter is the name of the tag for each element in the range. The second (optional) parameter is the name of the range tag enclosing each element.
 - `[[=no_iter]]` -- The opposite of `iter` to disable automatic iteration of STL ranges. See the confusion points for more information on STL handling.
 - `[[=format{"format_specifier"}]]` -- Add a format specifier in the call to `std::format` for that member. Do not prefix with a colon (`:`) as the library handles that on its own.
+- `[[=cdata]]` -- Emit the value inside `cdata` (`<![CDATA[your_content]]>`) tags.
+- `[[=exclude_on_empty]]` -- Do not emit any tags when the range is empty
 
 ### Common Confusion Points
 
-1. For *some* STL containers, the library automatically iterates through them. Therefore, your generated XML will not match the expectations. To avoid this, add the `[[=no_iter]]` annotation to object member.
+1. For *some* STL containers, the library automatically iterates through them. Therefore, your generated XML will not match the expectations. To avoid this, add the `[[=no_iter]]` annotation to object member. The current list of STL containers that are automatically iterated:
+    - `std::vector`
+    - `std::array`
+    - `std::inplace_vector`
+    - `std::deque`
+    - `std::forward_list`
+    - `std::span`
+    - `std::valarray`
+1. The precedence order for STL handled ranges is as follows:
+    1. `exclude_on_empty`
+    1. `raw` -- note that this only applies to the outer layer of tags for the range. Not each individual element in the range
+    1. `cdata`
+1. The precedence order for children is as follows:
+    1. STL Handling (see above)
+    1. `raw`
+    1. Iteration
+    1. Unpacking
+    1. CData
+1. `format` is ignored for unpacked or iterated members
 
 ## Contributing
 
