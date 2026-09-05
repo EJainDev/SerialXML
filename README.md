@@ -2,7 +2,7 @@
 
 ![Banner](./assets/SerialXML.png)
 
-![Build](https://github.com/EJainDev/SerialXML/actions/workflows/build.yml/badge.svg)
+![Build and Tests](https://github.com/EJainDev/SerialXML/actions/workflows/build-and-test.yml/badge.svg)
 ![C++26](https://img.shields.io/badge/C%2B%2B-26-blue)
 ![CMake 4.3+](https://img.shields.io/badge/CMake-4.3%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-lightgray)
