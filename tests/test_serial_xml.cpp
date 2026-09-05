@@ -554,3 +554,12 @@ TEST(Formatting, StringChild) {
   ASSERT_EQ(clean_to_xml(obj),
             "<FormattedStringChild><text>****text****</text></FormattedStringChild>");
 }
+
+TEST(Functions, Basic) {
+  struct BasicFunction {
+    int x() const { return 3; }
+  };
+  BasicFunction obj;
+
+  ASSERT_EQ(clean_to_xml(obj), "<BasicFunction><x>3</x></BasicFunction>");
+}
