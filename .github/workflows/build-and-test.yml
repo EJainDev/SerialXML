@@ -2,7 +2,24 @@ name: Build
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - 'include/**'
+      - '.github/workflows/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'benchmarks/**'
+
   pull_request:
+    branches:
+      - main
+    paths:
+      - 'include/**'
+      - '.github/workflows/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'benchmarks/**'
 
 jobs:
   build:
