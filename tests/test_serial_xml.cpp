@@ -563,3 +563,43 @@ TEST(Functions, Basic) {
 
   ASSERT_EQ(clean_to_xml(obj), "<BasicFunction><x>3</x></BasicFunction>");
 }
+
+TEST(Functions, RequiresConst) {
+  struct ConstFunction {
+    int x() { return 3; }
+  };
+  ConstFunction obj;
+
+  ASSERT_EQ(clean_to_xml(obj), "<ConstFunction/>");
+}
+
+TEST(Functions, NoStaticFunc) {
+  struct NoStaticFunction {
+    static int x() { return 3; }
+  };
+  NoStaticFunction obj;
+
+  ASSERT_EQ(clean_to_xml(obj), "<NoStaticFunction/>");
+}
+
+TEST(Functions, IgnoreParameterized) {
+  struct IgnoreParameterizedFunction {
+    int x(int a) const { return a; }
+  };
+  IgnoreParameterizedFunction obj;
+
+  ASSERT_EQ(clean_to_xml(obj), "<IgnoreParameterizedFunction/>");
+}
+
+struct IgnoreTemplatedFunction {
+  template <typename T>
+  int x() const {
+    return 3;
+  }
+};
+
+TEST(Functions, IgnoreTemplated) {
+  IgnoreTemplatedFunction obj;
+
+  ASSERT_EQ(clean_to_xml(obj), "<IgnoreTemplatedFunction/>");
+}
