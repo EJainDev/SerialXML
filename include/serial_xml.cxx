@@ -264,6 +264,8 @@ consteval auto is_invalid_function() {
         return true;
       }
     }
+  } else if constexpr (std::meta::is_function_template(m)) {
+    return true;
   }
 
   return false;
