@@ -86,6 +86,32 @@ consteval std::meta::info get_namespace() {
 }
 
 template <std::meta::info m>
+auto get_value(auto s) {
+  if constexpr (std::meta::is_function(m)) {
+    return s.[:m:]();
+  }
+  return s.[:m:];
+}
+
+template <std::meta::info m>
+struct value_type {
+  using t = std::remove_cvref_t<typename [:std::meta::type_of(m):]>;
+  static constexpr auto m_t = std::meta::dealias(std::meta::type_of(m));
+};
+
+template <std::meta::info m> requires (std::meta::is_function(m))
+struct value_type<m> {
+  using t = std::remove_cvref_t<typename [:std::meta::return_type_of(m):]>;
+  static constexpr auto m_t = std::meta::dealias(std::meta::return_type_of(m));
+};
+
+template <std::meta::info m>
+using value_t = typename value_type<m>::t;
+
+template <std::meta::info m>
+static constexpr auto value_m_t = value_type<m>::m_t;
+
+template <std::meta::info m>
 consteval bool is_stl_handled() {
   if constexpr (get_namespace<m>() == ^^std) {
     static constexpr auto m_t = std::meta::template_of(std::meta::dealias(m));
@@ -799,11 +825,11 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     if constexpr (is_std) {
       handle_stl<true, false, true, false, false, false, m_name,
                  (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
-                                                                                  value.[:m:]);
+                                                                                  get_value<m>(value));
     } else if constexpr (custom_format != nullptr) {
-      add_attribute<m_name, custom_format>(result, buffer, value.[:m:]);
+      add_attribute<m_name, custom_format>(result, buffer, get_value<m>(value));
     } else {
-      add_attribute<m_name, std::define_static_string("")>(result, buffer, value.[:m:]);
+      add_attribute<m_name, std::define_static_string("")>(result, buffer, get_value<m>(value));
     }
   }
 
@@ -843,7 +869,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
         handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
                    (custom_format) ? custom_format : std::define_static_string("")>(result, buffer,
-                                                                                    value.[:m:]);
+                                                                                    get_value<m>(value));
       } else {
         if constexpr (iter_names.first != nullptr &&
                       std::meta::is_class_type(std::meta::type_of(m)) &&
@@ -854,7 +880,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
             result.push_back('>');
           }
 
-          for (const auto& item : value.[:m:]) {
+          for (const auto& item : get_value<m>(value)) {
             if constexpr (is_unpack) {
               to_xml(item, result, buffer, false, iter_names.first);
             } else {
@@ -873,7 +899,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
             result.push_back('>');
           }
         } else if constexpr (is_unpack) {
-          to_xml(value.[:m:], result, buffer, false, m_name);
+          to_xml(get_value<m>(value), result, buffer, false, m_name);
         } else {
           if constexpr (is_raw) {
             buffer.clear();
@@ -881,9 +907,9 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
               static constexpr auto gen_format =
                   std::define_static_string(std::string("{:") + custom_format + '}');
               std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
-                             value.[:m:]);
+                             get_value<m>(value));
             } else {
-              std::format_to(std::back_inserter(buffer), "{}", value.[:m:]);
+              std::format_to(std::back_inserter(buffer), "{}", get_value<m>(value));
             }
 
             auto padded_size = get_escape_bitmask(buffer);
@@ -899,10 +925,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                 });
           } else {
             if constexpr (custom_format != nullptr) {
-              add_child<m_name, is_cdata, custom_format>(result, buffer, value.[:m:]);
+              add_child<m_name, is_cdata, custom_format>(result, buffer, get_value<m>(value));
             } else {
               add_child<m_name, is_cdata, std::define_static_string("")>(result, buffer,
-                                                                         value.[:m:]);
+                                                                         get_value<m>(value));
             }
           }
         }
