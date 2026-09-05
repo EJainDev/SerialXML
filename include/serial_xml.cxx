@@ -251,6 +251,10 @@ consteval auto is_invalid_function() {
       return true;
     }
 
+    if constexpr (!std::meta::is_const(m)) {
+      return true;
+    }
+
     static constexpr auto params = std::define_static_array(std::meta::parameters_of(m));
     template for (constexpr auto p : params) {
       if constexpr (!std::meta::has_default_argument(p)) {
