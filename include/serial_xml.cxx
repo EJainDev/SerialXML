@@ -87,10 +87,13 @@ consteval std::meta::info get_namespace() {
 
 template <std::meta::info m>
 auto get_value(auto s) {
-  if constexpr (std::meta::is_function(m)) {
-    return s.[:m:]();
-  }
   return s.[:m:];
+}
+
+template <std::meta::info m>
+  requires(std::meta::is_function(m))
+auto get_value(auto s) {
+  return s.[:m:]();
 }
 
 template <std::meta::info m>
