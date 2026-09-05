@@ -95,29 +95,15 @@ C++ Standard | 26 | SIMD, Reflection, Annotations |
 This library is the *fastest* XML serialization library. It is 8.3x faster than `boost_xml` and 1.9x faster than `pugixml` for struct to XML serialization.
 
 Benchmarks on my machine (single Intel Core 7 240H with 5600 MT/s DDR5):
-```
-serial_xml:
-  iterations: 100000
-  total:      82.208 ms
-  per iter:   822.085 ns
 
-boost_xml:
-  iterations: 100000
-  total:      789.931 ms
-  per iter:   7899.305 ns
+| Library | Iterations | Time per Iter (ns) | Total Time (ms) |
+| --- | --- | --- | --- |
+| SerialXML | 100000 | 822.085 | 82.208 |
+| Boost.Serialization | 100000 | 7899.305 | 789.931 |
+| Pugixml | 100000 | 1585.212 | 158.521 |
+| Cereal | 100000 | 7945.590 | 794.559 |
 
-cereal_xml:
-  iterations: 100000
-  total:      794.559 ms
-  per iter:   7945.590 ns
-
-pugixml:
-  iterations: 100000
-  total:      158.521 ms
-  per iter:   1585.212 ns
-```
-
-To build benchmarks and do independent evaluation, add the `-D BUILD_BENCHMARKS=ON` flag when configuring CMake.
+The main reason this library is so much faster is because all of the above ones use runtime DOM creation adding overhead. Pugixml, for example, uses two pass heap allocations while this library uses two `std::string` objects for each call to `to_xml`. Since this DOM is entirely evaluated at compile time, it also opens up opportunities for the compiler to optimize far better.
 
 ## Annotations
 
