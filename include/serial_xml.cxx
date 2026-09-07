@@ -86,13 +86,13 @@ consteval std::meta::info get_namespace() {
 }
 
 template <std::meta::info m>
-auto get_value(auto s) {
-  return s.[:m:];
+inline decltype(auto) get_value(auto&& s) {
+  return (s.[:m:]);
 }
 
 template <std::meta::info m>
   requires(std::meta::is_function(m))
-auto get_value(auto s) {
+inline decltype(auto) get_value(auto&& s) {
   return s.[:m:]();
 }
 
