@@ -357,82 +357,84 @@ consteval auto is_invalid_function() {
   return false;
 }
 
+struct member_descriptor {
+  std::meta::info member;
+  bool is_attribute;
+  bool is_cdata;
+  bool is_no_iter;
+  bool is_raw;
+  bool is_skip;
+  bool is_unpack;
+  std::pair<char const*, char const*> iter_names;
+  char const* name;
+  bool is_exclude_on_empty;
+};
+
+template <std::meta::info m>
+consteval member_descriptor describe_member() {
+  static constexpr auto annotations = get_annotations<m>();
+
+  // Validate all members before filtering skipped members so annotations have one set of rules.
+  static_assert(!(structural_tuple::get<0>(annotations) && structural_tuple::get<5>(annotations)),
+                "Cannot have both serial_xml::attribute and serial_xml::unpack annotations on the "
+                "same member. If you did not add the unpack annotation, add the "
+                "serial_xml::no_unpack annotation to the member. Member name: " +
+                    std::string(std::meta::identifier_of(m)));
+  static_assert(!(structural_tuple::get<0>(annotations) && structural_tuple::get<1>(annotations)),
+                "Cannot have both serial_xml::attribute and serial_xml::cdata annotations on the "
+                "same member. Member name: " +
+                    std::string(std::meta::identifier_of(m)));
+  static_assert(!(structural_tuple::get<0>(annotations) && structural_tuple::get<3>(annotations)),
+                "Cannot have both serial_xml::attribute and serial_xml::raw annotations on the "
+                "same member. Member name: " +
+                    std::string(std::meta::identifier_of(m)));
+  static_assert(!(structural_tuple::get<1>(annotations) && structural_tuple::get<3>(annotations)),
+                "Cannot have both serial_xml::cdata and serial_xml::raw annotations on the "
+                "same member. Member name: " +
+                    std::string(std::meta::identifier_of(m)));
+  static_assert(!(structural_tuple::get<1>(annotations) && structural_tuple::get<5>(annotations)),
+                "Cannot have both serial_xml::cdata and serial_xml::unpack annotations on the "
+                "same member. Member name: " +
+                    std::string(std::meta::identifier_of(m)));
+  static_assert(!(structural_tuple::get<1>(annotations) && !structural_tuple::get<2>(annotations)),
+                "Cannot have both the serial_xml::cdata annotation and iteration on the "
+                "same member. Member name: " +
+                    std::string(std::meta::identifier_of(m)));
+
+  return {m,
+          structural_tuple::get<0>(annotations),
+          structural_tuple::get<1>(annotations),
+          structural_tuple::get<2>(annotations),
+          structural_tuple::get<3>(annotations),
+          structural_tuple::get<4>(annotations),
+          structural_tuple::get<5>(annotations),
+          structural_tuple::get<6>(annotations),
+          structural_tuple::get<7>(annotations),
+          structural_tuple::get<8>(annotations)};
+}
+
+// Mock registration can replace the candidate source without changing annotation processing.
+template <std::meta::info container>
+consteval auto get_member_candidates() {
+  return std::define_static_array(
+      std::meta::members_of(container, std::meta::access_context::current()));
+}
+
 template <std::meta::info container>
 consteval auto get_members() {
-  static constexpr auto members = std::define_static_array(
-      std::meta::members_of(container, std::meta::access_context::current()));
-
-  std::vector<
-      std::pair<std::meta::info,
-                structural_tuple::tuple<bool, bool, bool, bool, std::pair<char const*, char const*>,
-                                        char const*, bool>>>
-      child_annotations;
-  std::vector<std::pair<std::meta::info, structural_tuple::tuple<char const*>>>
-      attribute_annotations;
+  static constexpr auto members = get_member_candidates<container>();
+  std::vector<member_descriptor> descriptors;
 
   template for (constexpr auto m : members) {
-    static constexpr auto invalid_function = is_invalid_function<m>();
-
-    if constexpr (!invalid_function) {
-      static constexpr auto m_annotations = get_annotations<m>();
-
-      // Invalid attribute combinations
-      static_assert(
-          !(structural_tuple::get<0>(m_annotations) && structural_tuple::get<5>(m_annotations)),
-          "Cannot have both serial_xml::attribute and serial_xml::unpack annotations on the "
-          "same member. If you did not add the unpack annotation, add the "
-          "serial_xml::no_unpack annotation to the member. Member name: " +
-              std::string(std::meta::identifier_of(m)));
-
-      static_assert(
-          !(structural_tuple::get<0>(m_annotations) && structural_tuple::get<1>(m_annotations)),
-          "Cannot have both serial_xml::attribute and serial_xml::cdata annotations on the "
-          "same member. Member name: " +
-              std::string(std::meta::identifier_of(m)));
-
-      static_assert(
-          !(structural_tuple::get<0>(m_annotations) && structural_tuple::get<3>(m_annotations)),
-          "Cannot have both serial_xml::attribute and serial_xml::raw annotations on the "
-          "same member. Member name: " +
-              std::string(std::meta::identifier_of(m)));
-
-      // Invalid child combinations
-      static_assert(
-          !(structural_tuple::get<1>(m_annotations) && structural_tuple::get<3>(m_annotations)),
-          "Cannot have both serial_xml::cdata and serial_xml::raw annotations on the "
-          "same member. Member name: " +
-              std::string(std::meta::identifier_of(m)));
-      static_assert(
-          !(structural_tuple::get<1>(m_annotations) && structural_tuple::get<5>(m_annotations)),
-          "Cannot have both serial_xml::cdata and serial_xml::unpack annotations on the "
-          "same member. Member name: " +
-              std::string(std::meta::identifier_of(m)));
-      static_assert(
-          !(structural_tuple::get<1>(m_annotations) && !structural_tuple::get<2>(m_annotations)),
-          "Cannot have both the serial_xml::cdata annotation and iteration on the "
-          "same member. Member name: " +
-              std::string(std::meta::identifier_of(m)));
-
-      if constexpr (structural_tuple::get<4>(m_annotations)) {
-        continue;
-      }
-
-      if constexpr (structural_tuple::get<0>(m_annotations)) {
-        attribute_annotations.push_back(
-            std::make_pair(m, structural_tuple::tuple{structural_tuple::get<7>(m_annotations)}));
-      } else {
-        child_annotations.push_back(std::make_pair(
-            m, structural_tuple::tuple{
-                   structural_tuple::get<1>(m_annotations), structural_tuple::get<2>(m_annotations),
-                   structural_tuple::get<3>(m_annotations), structural_tuple::get<5>(m_annotations),
-                   structural_tuple::get<6>(m_annotations), structural_tuple::get<7>(m_annotations),
-                   structural_tuple::get<8>(m_annotations)}));
+    if constexpr (!is_invalid_function<m>()) {
+      static constexpr auto descriptor = describe_member<m>();
+      if constexpr (!descriptor.is_skip) {
+        descriptors.push_back(descriptor);
       }
     }
   }
 
-  return std::make_pair(std::define_static_array(attribute_annotations),
-                        std::define_static_array(child_annotations));
+  return std::define_static_array(descriptors);
 }
 
 template <auto name>
@@ -910,57 +912,15 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   std::format_to(std::back_inserter(result), "<{}", name);
 
   static constexpr auto members = get_members<M>();
-  static constexpr auto attribute_annotations = members.first;
-  static constexpr auto child_annotations = members.second;
+  static constexpr auto has_children =
+      std::ranges::any_of(members, [](const member_descriptor& m) { return !m.is_attribute; });
 
-  template for (constexpr auto m_a : attribute_annotations) {
-    static constexpr auto is_std = is_stl_handled<std::meta::type_of(m_a.first)>();
-
-    static constexpr auto m = m_a.first;
-    static constexpr auto m_annotations = m_a.second;
-
-    static constexpr auto formatter = get_format<m>();
-    static constexpr auto m_name = structural_tuple::get<0>(m_annotations);
-
-    static constexpr auto view_name = std::string_view(m_name);
-
-    static_assert(
-        std::ranges::all_of(
-            view_name, [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
-            !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
-              is_num(view_name[0]) || std::ranges::starts_with(view_name, std::string_view("xml"))),
-        std::string("Invalid XML name: '") + std::string(view_name) + "'");
-
-    if constexpr (is_std) {
-      handle_stl<true, false, true, false, false, false, m_name, formatter>(result, buffer,
-                                                                            get_value<m>(value));
-    } else {
-      add_attribute<m_name, formatter>(result, buffer, get_value<m>(value));
-    }
-  }
-
-  if constexpr (child_annotations.size() == 0) {
-    result += "/>";
-  } else {
-    result += '>';
-
-    template for (constexpr auto m_a : child_annotations) {
-      static constexpr auto is_std = is_stl_handled<std::meta::type_of(m_a.first)>();
-
-      static constexpr auto m = m_a.first;
-      static constexpr auto m_annotations = m_a.second;
-
-      static constexpr auto is_cdata = structural_tuple::get<0>(m_annotations);
-      static constexpr auto is_no_iter = structural_tuple::get<1>(m_annotations);
-      static constexpr auto is_raw = structural_tuple::get<2>(m_annotations);
-      static constexpr auto is_unpack = structural_tuple::get<3>(m_annotations);
-
+  template for (constexpr auto descriptor : members) {
+    if constexpr (descriptor.is_attribute) {
+      static constexpr auto m = descriptor.member;
+      static constexpr auto is_std = is_stl_handled<value_m_t<m>>();
       static constexpr auto formatter = get_format<m>();
-      static constexpr auto iter_names = structural_tuple::get<4>(m_annotations);
-
-      static constexpr auto m_name = structural_tuple::get<5>(m_annotations);
-
-      static constexpr auto is_exclude_on_empty = structural_tuple::get<6>(m_annotations);
+      static constexpr auto m_name = descriptor.name;
 
       static constexpr auto view_name = std::string_view(m_name);
 
@@ -972,50 +932,88 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                 std::ranges::starts_with(view_name, std::string_view("xml"))),
           std::string("Invalid XML name: '") + std::string(view_name) + "'");
 
-      if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
-        handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
-                   formatter>(result, buffer, get_value<m>(value));
+      if constexpr (is_std) {
+        handle_stl<true, false, true, false, false, false, m_name, formatter>(result, buffer,
+                                                                              get_value<m>(value));
       } else {
-        if constexpr (iter_names.first != nullptr && std::meta::is_class_type(value_m_t<m>) &&
-                      std::ranges::range<value_t<m>>) {
-          if constexpr (!is_raw) {
-            result.push_back('<');
-            result.append(iter_names.second);
-            result.push_back('>');
-          }
+        add_attribute<m_name, formatter>(result, buffer, get_value<m>(value));
+      }
+    }
+  }
 
-          for (const auto& item : get_value<m>(value)) {
-            if constexpr (is_unpack) {
-              to_xml(item, result, buffer, false, iter_names.first);
-            } else {
-              add_child<iter_names.first, is_cdata, formatter>(result, buffer, item);
-            }
-          }
+  if constexpr (!has_children) {
+    result += "/>";
+  } else {
+    result += '>';
 
-          if constexpr (!is_raw) {
-            result.append("</");
-            result.append(iter_names.second);
-            result.push_back('>');
-          }
-        } else if constexpr (is_unpack) {
-          to_xml(get_value<m>(value), result, buffer, false, m_name);
+    template for (constexpr auto descriptor : members) {
+      if constexpr (!descriptor.is_attribute) {
+        static constexpr auto m = descriptor.member;
+        static constexpr auto is_std = is_stl_handled<value_m_t<m>>();
+        static constexpr auto is_cdata = descriptor.is_cdata;
+        static constexpr auto is_no_iter = descriptor.is_no_iter;
+        static constexpr auto is_raw = descriptor.is_raw;
+        static constexpr auto is_unpack = descriptor.is_unpack;
+        static constexpr auto formatter = get_format<m>();
+        static constexpr auto iter_names = descriptor.iter_names;
+        static constexpr auto m_name = descriptor.name;
+        static constexpr auto is_exclude_on_empty = descriptor.is_exclude_on_empty;
+
+        static constexpr auto view_name = std::string_view(m_name);
+
+        static_assert(std::ranges::all_of(
+                          view_name,
+                          [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
+                          !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
+                            is_num(view_name[0]) ||
+                            std::ranges::starts_with(view_name, std::string_view("xml"))),
+                      std::string("Invalid XML name: '") + std::string(view_name) + "'");
+
+        if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
+          handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
+                     formatter>(result, buffer, get_value<m>(value));
         } else {
-          if constexpr (is_raw) {
-            buffer = format_value<formatter>(get_value<m>(value));
+          if constexpr (iter_names.first != nullptr && std::meta::is_class_type(value_m_t<m>) &&
+                        std::ranges::range<value_t<m>>) {
+            if constexpr (!is_raw) {
+              result.push_back('<');
+              result.append(iter_names.second);
+              result.push_back('>');
+            }
 
-            auto padded_size = get_escape_bitmask(buffer);
+            for (const auto& item : get_value<m>(value)) {
+              if constexpr (is_unpack) {
+                to_xml(item, result, buffer, false, iter_names.first);
+              } else {
+                add_child<iter_names.first, is_cdata, formatter>(result, buffer, item);
+              }
+            }
 
-            auto num_escapes = count_escapes(padded_size);
-
-            const auto original_size = result.size();
-            result.resize_and_overwrite(
-                original_size + buffer.size() + (num_escapes * 5), [&](char* buf, std::size_t) {
-                  buf += original_size;
-
-                  return original_size + copy_with_escapes(buf, buffer, padded_size);
-                });
+            if constexpr (!is_raw) {
+              result.append("</");
+              result.append(iter_names.second);
+              result.push_back('>');
+            }
+          } else if constexpr (is_unpack) {
+            to_xml(get_value<m>(value), result, buffer, false, m_name);
           } else {
-            add_child<m_name, is_cdata, formatter>(result, buffer, get_value<m>(value));
+            if constexpr (is_raw) {
+              buffer = format_value<formatter>(get_value<m>(value));
+
+              auto padded_size = get_escape_bitmask(buffer);
+
+              auto num_escapes = count_escapes(padded_size);
+
+              const auto original_size = result.size();
+              result.resize_and_overwrite(
+                  original_size + buffer.size() + (num_escapes * 5), [&](char* buf, std::size_t) {
+                    buf += original_size;
+
+                    return original_size + copy_with_escapes(buf, buffer, padded_size);
+                  });
+            } else {
+              add_child<m_name, is_cdata, formatter>(result, buffer, get_value<m>(value));
+            }
           }
         }
       }
