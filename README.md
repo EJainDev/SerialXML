@@ -126,36 +126,36 @@ This is the complete list of annotations:
 
 ### Mock classes for types you cannot annotate
 
-Specialize `serial_xml::mock_type<T>` to associate a type with a mock class. The
-mock's annotated, public, const functions describe the XML fields. SerialXML
-calls functions with matching names and compatible return types on the actual
-object; the mock functions only need declarations. This works for third-party
-types and standard library types whose declarations cannot be modified.
+Annotate a field with `serial_xml::mock<Mock>` to select its XML view. In the
+mock class, annotate each serialized function with `serial_xml::accessor<&T::function>`
+to identify the real function to call. The mock functions only need declarations.
+This works for third-party and standard library types whose declarations cannot
+be modified.
 
 ```cpp
-struct vector {
-  [[=serial_xml::attribute, =serial_xml::name{"count"}]] std::size_t size() const;
-  [[=serial_xml::name{"is_empty"}]] bool empty() const;
+template <typename T>
+struct vector_mock {
+  [[=serial_xml::accessor<&T::size>{}, =serial_xml::attribute,
+    =serial_xml::name{"count"}]] std::size_t size() const;
+  [[=serial_xml::accessor<&T::empty>{}, =serial_xml::name{"is_empty"}]] bool empty() const;
 };
 
-template <typename T, typename Allocator>
-struct serial_xml::mock_type<std::vector<T, Allocator>> {
-  using type = vector;
+struct document {
+  [[=serial_xml::mock<vector_mock<std::vector<int>>>{}]] std::vector<int> values;
 };
 
-struct document { std::vector<int> values; };
 // <document><values count="3"><is_empty>false</is_empty></values></document>
 serial_xml::to_xml(document{{1, 2, 3}}, false);
 ```
 
 Only annotated mock members are serialized. Each must be a non-void, const
-function callable without arguments. A matching target function must be public,
-const, callable without arguments, and return a type convertible to the mock
-function's return type. Missing or ambiguous matches produce a compile-time
-diagnostic. Registration is by type through `mock_type<T>`; sharing a class name
-alone does not activate a mock. Explicit registration takes precedence over
-automatic STL iteration for the registered type, including nested members. To
-retain automatic iteration, leave the type unregistered.
+function callable without arguments, with an accessor annotation naming a
+compatible callable on the actual object. The accessor resolves directly at
+compile time, including overload selection through an explicit cast when needed.
+The mock annotation takes precedence over automatic STL iteration for that
+field. Other fields of the same type retain their usual serialization. To mock
+the root value, pass the mock as a template argument to `to_xml`, such as
+`serial_xml::to_xml<vector_mock<std::vector<int>>>(values)`.
 
 ### Common Confusion Points
 
@@ -226,7 +226,7 @@ Set `-D BUILD_EXAMPLES=OFF` when configuring CMake to omit them from your build.
 | [`format_specifiers.cpp`](examples/format_specifiers.cpp) | Passing format specifications through to `std::format`. |
 | [`escaping.cpp`](examples/escaping.cpp) | Escaping XML-special characters in children, attributes, and raw text. |
 | [`advanced_mixed.cpp`](examples/advanced_mixed.cpp) | A combined example using attributes, named tags, nesting, iteration, and escaping. |
-| [`mock_vector.cpp`](examples/mock_vector.cpp) | Registering a mock class for `std::vector` and serializing its accessors. |
+| [`mock_vector.cpp`](examples/mock_vector.cpp) | Annotating a `std::vector` field with a mock that serializes its accessors. |
 
 ## Contributing
 

@@ -45,14 +45,29 @@ export constexpr cdata_ cdata;
 struct exclude_on_empty_ {};
 export constexpr exclude_on_empty_ exclude_on_empty;
 
-// Specialize for an existing type to serialize it through an annotated mock class.
 export template <typename T>
-struct mock_type {
-  using type = void;
+struct mock {};
+
+export template <auto Member>
+struct accessor {
+  static constexpr auto value = Member;
 };
 
 template <typename T>
-inline constexpr bool has_mock_type = !std::is_void_v<typename mock_type<T>::type>;
+concept mock_class = std::is_class_v<T>;
+
+template <std::meta::info m>
+consteval std::meta::info mock_of() {
+  static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
+  template for (constexpr auto a : annotations) {
+    static constexpr auto a_t = std::meta::type_of(a);
+    if constexpr (std::meta::has_template_arguments(a_t) &&
+                  std::meta::template_of(a_t) == ^^::serial_xml::mock) {
+      return std::meta::template_arguments_of(a_t)[0];
+    }
+  }
+  return ^^void;
+}
 
 constexpr bool is_alpha(const char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
@@ -175,51 +190,39 @@ consteval std::meta::info get_namespace() {
   return m;
 }
 
-template <std::meta::info m>
+template <std::meta::info m, typename Mock = void>
 inline decltype(auto) get_value(auto&& s) {
   return (s.[:m:]);
 }
 
-template <std::meta::info mock_member, typename T>
-  requires(std::meta::is_function(mock_member))
-consteval auto find_mock_function() -> std::pair<std::meta::info, std::size_t> {
-  static constexpr auto actual_members =
-      std::define_static_array(std::meta::members_of(^^T, std::meta::access_context::current()));
-  std::meta::info match = ^^void;
-  std::size_t count = 0;
-
-  template for (constexpr auto candidate : actual_members) {
-    if constexpr (std::meta::is_function(candidate) && !std::meta::is_constructor(candidate) &&
-                  !std::meta::is_destructor(candidate)) {
-      if constexpr (std::meta::has_identifier(candidate) &&
-                    std::meta::identifier_of(candidate) == std::meta::identifier_of(mock_member) &&
-                    std::meta::is_const(candidate) && std::meta::parameters_of(candidate).empty() &&
-                    std::is_convertible_v<typename[:std::meta::return_type_of(candidate):], typename
-                                                  [:std::meta::return_type_of(mock_member):]>) {
-        match = candidate;
-        ++count;
-      }
+template <std::meta::info m>
+consteval std::meta::info accessor_of() {
+  static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
+  template for (constexpr auto a : annotations) {
+    static constexpr auto a_t = std::meta::type_of(a);
+    if constexpr (std::meta::has_template_arguments(a_t) &&
+                  std::meta::template_of(a_t) == ^^::serial_xml::accessor) {
+      return std::meta::template_arguments_of(a_t)[0];
     }
   }
-  return {match, count};
+  return ^^void;
 }
 
-template <std::meta::info m>
+template <std::meta::info m, typename Mock = void>
   requires(std::meta::is_function(m))
 inline decltype(auto) get_value(auto&& s) {
-  using T = std::remove_cvref_t<decltype(s)>;
-  if constexpr (has_mock_type<T>) {
-    static constexpr auto match = find_mock_function<m, T>();
-    static_assert(match.second != 0,
-                  "No compatible public const zero-argument function on the registered type for "
-                  "mock function " +
-                      std::string(std::meta::identifier_of(m)));
-    static_assert(match.second <= 1,
-                  "Ambiguous public const zero-argument functions on the registered type for "
-                  "mock function " +
-                      std::string(std::meta::identifier_of(m)));
-    if constexpr (match.second == 1) {
-      return s.[:match.first:]();
+  if constexpr (mock_class<Mock>) {
+    static constexpr auto member = accessor_of<m>();
+    static_assert(member != ^^void, "Annotated mock functions require serial_xml::accessor");
+    if constexpr (member != ^^void) {
+      static_assert(std::is_invocable_v<decltype([:member:]), decltype(s)>,
+                    "Mock accessor must be callable on the serialized object");
+      if constexpr (std::is_invocable_v<decltype([:member:]), decltype(s)>) {
+        static_assert(std::is_convertible_v<std::invoke_result_t<decltype([:member:]), decltype(s)>,
+                                            typename[:std::meta::return_type_of(m):]>,
+                      "Mock accessor result must be convertible to the declared return type");
+        return std::invoke([:member:], s);
+      }
     }
   } else {
     return s.[:m:]();
@@ -247,9 +250,6 @@ constexpr auto value_m_t = value_type<m>::m_t;
 
 template <std::meta::info m>
 consteval bool is_stl_handled() {
-  if constexpr (has_mock_type<typename[:m:]>) {
-    return false;
-  }
   if constexpr (get_namespace<m>() == ^^std) {
     static constexpr auto m_t = std::meta::template_of(std::meta::dealias(m));
 
@@ -275,7 +275,7 @@ consteval auto get_annotations()
   bool is_raw = false;
   bool is_skip = false;
   bool is_unpack = std::meta::is_class_type(value_m_t<m>) &&
-                   (has_mock_type<value_t<m>> ||
+                   (mock_of<m>() != ^^void ||
                     (!std::formattable<value_t<m>, char> && !is_stl_handled<value_m_t<m>>()));
 
   bool has_custom_format_function = false;
@@ -410,12 +410,11 @@ consteval auto is_invalid_function() {
   return false;
 }
 
-template <std::meta::info container>
+template <std::meta::info container, typename Mock = void>
 consteval auto get_members() {
-  using T = typename[:container:];
   static constexpr auto source = [] {
-    if constexpr (has_mock_type<T>) {
-      return ^^typename mock_type<T>::type;
+    if constexpr (mock_class<Mock>) {
+      return ^^Mock;
     } else {
       return container;
     }
@@ -434,7 +433,7 @@ consteval auto get_members() {
   template for (constexpr auto m : members) {
     static constexpr auto invalid_function = is_invalid_function<m>();
 
-    if constexpr (has_mock_type<T>) {
+    if constexpr (mock_class<Mock>) {
       if constexpr (!std::meta::annotations_of(m).empty()) {
         static_assert(std::meta::is_function(m) && !invalid_function,
                       "Annotated mock members must be const, non-void functions callable without "
@@ -879,7 +878,7 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
   }
 }
 
-template <typename T>
+template <typename Mock = void, typename T>
   requires(std::is_class_v<T>)
 void to_xml(const T& value, std::string& result, std::string& buffer, bool first,
             const std::string& fixed_name = "");
@@ -951,7 +950,7 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
   return false;
 }
 
-template <typename T>
+template <typename Mock, typename T>
   requires(std::is_class_v<T>)
 void to_xml(const T& value, std::string& result, std::string& buffer, bool first,
             const std::string& fixed_name) {
@@ -983,7 +982,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   std::string name{buffer};
   std::format_to(std::back_inserter(result), "<{}", name);
 
-  static constexpr auto members = get_members<M>();
+  static constexpr auto members = get_members<M, Mock>();
   static constexpr auto attribute_annotations = members.first;
   static constexpr auto child_annotations = members.second;
 
@@ -1006,10 +1005,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
         std::string("Invalid XML name: '") + std::string(view_name) + "'");
 
     if constexpr (is_std) {
-      handle_stl<true, false, true, false, false, false, m_name, formatter>(result, buffer,
-                                                                            get_value<m>(value));
+      handle_stl<true, false, true, false, false, false, m_name, formatter>(
+          result, buffer, get_value<m, Mock>(value));
     } else {
-      add_attribute<m_name, formatter>(result, buffer, get_value<m>(value));
+      add_attribute<m_name, formatter>(result, buffer, get_value<m, Mock>(value));
     }
   }
 
@@ -1019,7 +1018,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     result += '>';
 
     template for (constexpr auto m_a : child_annotations) {
-      static constexpr auto is_std = is_stl_handled<std::meta::type_of(m_a.first)>();
+      static constexpr auto is_std =
+          is_stl_handled<std::meta::type_of(m_a.first)>() && mock_of<m_a.first>() == ^^void;
 
       static constexpr auto m = m_a.first;
       static constexpr auto m_annotations = m_a.second;
@@ -1048,7 +1048,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
       if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
         handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
-                   formatter>(result, buffer, get_value<m>(value));
+                   formatter>(result, buffer, get_value<m, Mock>(value));
       } else {
         if constexpr (iter_names.first != nullptr && std::meta::is_class_type(value_m_t<m>) &&
                       std::ranges::range<value_t<m>>) {
@@ -1058,7 +1058,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
             result.push_back('>');
           }
 
-          for (const auto& item : get_value<m>(value)) {
+          for (const auto& item : get_value<m, Mock>(value)) {
             if constexpr (is_unpack) {
               to_xml(item, result, buffer, false, iter_names.first);
             } else {
@@ -1072,10 +1072,11 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
             result.push_back('>');
           }
         } else if constexpr (is_unpack) {
-          to_xml(get_value<m>(value), result, buffer, false, m_name);
+          to_xml<typename[:mock_of<m>():]>(get_value<m, Mock>(value), result, buffer, false,
+                                           m_name);
         } else {
           if constexpr (is_raw) {
-            buffer = format_value<formatter>(get_value<m>(value));
+            buffer = format_value<formatter>(get_value<m, Mock>(value));
 
             auto padded_size = get_escape_bitmask(buffer);
 
@@ -1089,7 +1090,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                   return original_size + copy_with_escapes(buf, buffer, padded_size);
                 });
           } else {
-            add_child<m_name, is_cdata, formatter>(result, buffer, get_value<m>(value));
+            add_child<m_name, is_cdata, formatter>(result, buffer, get_value<m, Mock>(value));
           }
         }
       }
@@ -1107,7 +1108,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   }
 }
 
-export template <typename T>
+export template <typename Mock = void, typename T>
   requires(std::is_class_v<T>)
 auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "") -> std::string {
   std::string result;
@@ -1116,7 +1117,7 @@ auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "
   result.reserve(4096);
   buffer.reserve(256);
 
-  to_xml(value, result, buffer, first, fixed_name);
+  to_xml<Mock>(value, result, buffer, first, fixed_name);
 
   escape_flags.clear();
   escape_flags.shrink_to_fit();

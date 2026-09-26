@@ -6,33 +6,42 @@ import serial_xml;
 
 std::string clean_to_xml(auto obj) { return serial_xml::to_xml(obj, false); }
 
-// The declaration can live outside the namespace of the unmodifiable type.
-// Its member functions are never defined or called on a mock instance.
-struct vector {
-  [[ = serial_xml::attribute, = serial_xml::name{"count"} ]] std::size_t size() const;
-  [[= serial_xml::name{"is_empty"}]] bool empty() const;
+// The mock supplies XML annotations and points directly to the real accessors.
+struct vector_mock {
+  [[
+    = serial_xml::accessor<&std::vector<short>::size>{}, = serial_xml::attribute,
+    = serial_xml::name{"count"}
+  ]] std::size_t size() const;
+  [[ = serial_xml::accessor<&std::vector<short>::empty>{},
+     = serial_xml::name{"is_empty"} ]] bool empty() const;
   int ignored() const;
 };
 
-template <>
-struct serial_xml::mock_type<std::vector<short>> {
-  using type = vector;
-};
-
-TEST(Mock, RegisteredVectorRoot) {
+TEST(Mock, ExplicitVectorRoot) {
   std::vector<short> values{2, 4, 6};
-  ASSERT_EQ(serial_xml::to_xml(values, false, "numbers"),
+  ASSERT_EQ(serial_xml::to_xml<vector_mock>(values, false, "numbers"),
             "<numbers count=\"3\"><is_empty>false</is_empty></numbers>");
 }
 
-TEST(Mock, RegisteredVectorMemberOverridesBuiltInIteration) {
+TEST(Mock, AnnotatedVectorMemberOverridesBuiltInIteration) {
   struct VectorEnvelope {
-    std::vector<short> values;
+    [[= serial_xml::mock<vector_mock>{}]] std::vector<short> values;
   };
 
   ASSERT_EQ(clean_to_xml(VectorEnvelope{{2, 4, 6}}),
             "<VectorEnvelope><values count=\"3\"><is_empty>false</is_empty></values></"
             "VectorEnvelope>");
+}
+
+TEST(Mock, AnnotationAppliesOnlyToSelectedMember) {
+  struct MixedVectorEnvelope {
+    [[= serial_xml::mock<vector_mock>{}]] std::vector<short> summary;
+    std::vector<short> values;
+  };
+
+  ASSERT_EQ(clean_to_xml(MixedVectorEnvelope{{2, 4}, {6, 8}}),
+            "<MixedVectorEnvelope><summary count=\"2\"><is_empty>false</is_empty></summary>"
+            "<values><element>6</element><element>8</element></values></MixedVectorEnvelope>");
 }
 
 TEST(Naming, EmptyWithName) {
