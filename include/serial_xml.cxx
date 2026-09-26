@@ -45,6 +45,15 @@ export constexpr cdata_ cdata;
 struct exclude_on_empty_ {};
 export constexpr exclude_on_empty_ exclude_on_empty;
 
+// Specialize for an existing type to serialize it through an annotated mock class.
+export template <typename T>
+struct mock_type {
+  using type = void;
+};
+
+template <typename T>
+inline constexpr bool has_mock_type = !std::is_void_v<typename mock_type<T>::type>;
+
 constexpr bool is_alpha(const char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
 constexpr bool is_num(const char c) { return (c >= '0' && c <= '9'); }
@@ -171,10 +180,50 @@ inline decltype(auto) get_value(auto&& s) {
   return (s.[:m:]);
 }
 
+template <std::meta::info mock_member, typename T>
+  requires(std::meta::is_function(mock_member))
+consteval auto find_mock_function() -> std::pair<std::meta::info, std::size_t> {
+  static constexpr auto actual_members =
+      std::define_static_array(std::meta::members_of(^^T, std::meta::access_context::current()));
+  std::meta::info match = ^^void;
+  std::size_t count = 0;
+
+  template for (constexpr auto candidate : actual_members) {
+    if constexpr (std::meta::is_function(candidate) && !std::meta::is_constructor(candidate) &&
+                  !std::meta::is_destructor(candidate)) {
+      if constexpr (std::meta::has_identifier(candidate) &&
+                    std::meta::identifier_of(candidate) == std::meta::identifier_of(mock_member) &&
+                    std::meta::is_const(candidate) && std::meta::parameters_of(candidate).empty() &&
+                    std::is_convertible_v<typename[:std::meta::return_type_of(candidate):], typename
+                                                  [:std::meta::return_type_of(mock_member):]>) {
+        match = candidate;
+        ++count;
+      }
+    }
+  }
+  return {match, count};
+}
+
 template <std::meta::info m>
   requires(std::meta::is_function(m))
 inline decltype(auto) get_value(auto&& s) {
-  return s.[:m:]();
+  using T = std::remove_cvref_t<decltype(s)>;
+  if constexpr (has_mock_type<T>) {
+    static constexpr auto match = find_mock_function<m, T>();
+    static_assert(match.second != 0,
+                  "No compatible public const zero-argument function on the registered type for "
+                  "mock function " +
+                      std::string(std::meta::identifier_of(m)));
+    static_assert(match.second <= 1,
+                  "Ambiguous public const zero-argument functions on the registered type for "
+                  "mock function " +
+                      std::string(std::meta::identifier_of(m)));
+    if constexpr (match.second == 1) {
+      return s.[:match.first:]();
+    }
+  } else {
+    return s.[:m:]();
+  }
 }
 
 template <std::meta::info m>
@@ -198,6 +247,9 @@ constexpr auto value_m_t = value_type<m>::m_t;
 
 template <std::meta::info m>
 consteval bool is_stl_handled() {
+  if constexpr (has_mock_type<typename[:m:]>) {
+    return false;
+  }
   if constexpr (get_namespace<m>() == ^^std) {
     static constexpr auto m_t = std::meta::template_of(std::meta::dealias(m));
 
@@ -222,8 +274,9 @@ consteval auto get_annotations()
   bool is_no_iter = !is_stl_handled<value_m_t<m>>();
   bool is_raw = false;
   bool is_skip = false;
-  bool is_unpack = std::meta::is_class_type(value_m_t<m>) && !std::formattable<value_t<m>, char> &&
-                   !is_stl_handled<value_m_t<m>>();
+  bool is_unpack = std::meta::is_class_type(value_m_t<m>) &&
+                   (has_mock_type<value_t<m>> ||
+                    (!std::formattable<value_t<m>, char> && !is_stl_handled<value_m_t<m>>()));
 
   bool has_custom_format_function = false;
   std::optional<std::pair<std::string, std::string>> iter_names;
@@ -359,8 +412,16 @@ consteval auto is_invalid_function() {
 
 template <std::meta::info container>
 consteval auto get_members() {
-  static constexpr auto members = std::define_static_array(
-      std::meta::members_of(container, std::meta::access_context::current()));
+  using T = typename[:container:];
+  static constexpr auto source = [] {
+    if constexpr (has_mock_type<T>) {
+      return ^^typename mock_type<T>::type;
+    } else {
+      return container;
+    }
+  }();
+  static constexpr auto members =
+      std::define_static_array(std::meta::members_of(source, std::meta::access_context::current()));
 
   std::vector<
       std::pair<std::meta::info,
@@ -372,6 +433,17 @@ consteval auto get_members() {
 
   template for (constexpr auto m : members) {
     static constexpr auto invalid_function = is_invalid_function<m>();
+
+    if constexpr (has_mock_type<T>) {
+      if constexpr (!std::meta::annotations_of(m).empty()) {
+        static_assert(std::meta::is_function(m) && !invalid_function,
+                      "Annotated mock members must be const, non-void functions callable without "
+                      "arguments");
+      }
+      if constexpr (std::meta::annotations_of(m).empty()) {
+        continue;
+      }
+    }
 
     if constexpr (!invalid_function) {
       static constexpr auto m_annotations = get_annotations<m>();
@@ -628,7 +700,8 @@ void add_attribute(std::string& result, std::string& buffer, const auto& value) 
   static constexpr auto prefix_result = get_attribute_prefix<name>();
   static constexpr auto prefix = std::get<0>(prefix_result);
   static constexpr auto prefix_size = std::get<1>(prefix_result);
-  if constexpr (formatter.is_empty() && std::is_arithmetic_v<T> && sizeof(T) <= 64) {
+  if constexpr (formatter.is_empty() && std::is_arithmetic_v<T> && !std::is_same_v<T, bool> &&
+                sizeof(T) <= 64) {
     if constexpr (std::is_floating_point_v<T>) {
       static constexpr auto format_resize = 311 + prefix_size + 1;
 
@@ -730,7 +803,8 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
 
   const auto original_size = result.size();
 
-  if constexpr (formatter.is_empty() && std::is_arithmetic_v<T> && sizeof(T) <= 64) {
+  if constexpr (formatter.is_empty() && std::is_arithmetic_v<T> && !std::is_same_v<T, bool> &&
+                sizeof(T) <= 64) {
     if constexpr (std::is_floating_point_v<T>) {
       static constexpr auto format_resize = 311 + combined_size;
       result.resize_and_overwrite(original_size + format_resize,

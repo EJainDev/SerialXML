@@ -33,3 +33,6 @@ target_link_libraries(advanced_mixed PRIVATE serial_xml)
 
 add_executable(optional_types optional_types.cpp)
 target_link_libraries(optional_types PRIVATE serial_xml)
+
+add_executable(mock_vector mock_vector.cpp)
+target_link_libraries(mock_vector PRIVATE serial_xml)

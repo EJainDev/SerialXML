@@ -6,6 +6,35 @@ import serial_xml;
 
 std::string clean_to_xml(auto obj) { return serial_xml::to_xml(obj, false); }
 
+// The declaration can live outside the namespace of the unmodifiable type.
+// Its member functions are never defined or called on a mock instance.
+struct vector {
+  [[ = serial_xml::attribute, = serial_xml::name{"count"} ]] std::size_t size() const;
+  [[= serial_xml::name{"is_empty"}]] bool empty() const;
+  int ignored() const;
+};
+
+template <>
+struct serial_xml::mock_type<std::vector<short>> {
+  using type = vector;
+};
+
+TEST(Mock, RegisteredVectorRoot) {
+  std::vector<short> values{2, 4, 6};
+  ASSERT_EQ(serial_xml::to_xml(values, false, "numbers"),
+            "<numbers count=\"3\"><is_empty>false</is_empty></numbers>");
+}
+
+TEST(Mock, RegisteredVectorMemberOverridesBuiltInIteration) {
+  struct VectorEnvelope {
+    std::vector<short> values;
+  };
+
+  ASSERT_EQ(clean_to_xml(VectorEnvelope{{2, 4, 6}}),
+            "<VectorEnvelope><values count=\"3\"><is_empty>false</is_empty></values></"
+            "VectorEnvelope>");
+}
+
 TEST(Naming, EmptyWithName) {
   struct[[= serial_xml::name{"MyStruct"}]] EmptyName {};
   EmptyName obj;
