@@ -51,14 +51,95 @@ constexpr bool is_num(const char c) { return (c >= '0' && c <= '9'); }
 
 constexpr bool is_alnum(const char c) { return is_alpha(c) || is_num(c); }
 
-export template <std::size_t N>
+export template <std::size_t N = 1, typename F = std::nullptr_t>
 struct format {
-  char value[N];
+  char value[N]{};
+  F function{};
 
-  constexpr format(const char (&str)[N]) {
+  constexpr format(const char (&str)[N])
+    requires std::same_as<F, std::nullptr_t>
+  {
     for (std::size_t i = 0; i < N; ++i) value[i] = str[i];
   }
+
+  constexpr format(F formatter)
+    requires(!std::same_as<F, std::nullptr_t>)
+      : function(formatter) {}
 };
+
+template <std::size_t N>
+format(const char (&)[N]) -> format<N>;
+
+template <typename F>
+format(F) -> format<1, F>;
+
+template <std::size_t N, typename F>
+struct format_config {
+  serial_xml::format<N, F> value;
+
+  constexpr bool is_empty() const {
+    if constexpr (std::same_as<F, std::nullptr_t>) {
+      return std::strcmp(value.value, "") == 0;
+    }
+    return false;
+  }
+};
+
+template <auto formatter>
+std::string format_value(const auto& input) {
+  if constexpr (std::same_as<decltype(formatter.value.function), std::nullptr_t>) {
+    std::string result;
+    if constexpr (formatter.is_empty()) {
+      std::format_to(std::back_inserter(result), "{}", input);
+    } else {
+      static constexpr auto format_string =
+          std::define_static_string(std::string("{:") + formatter.value.value + '}');
+      std::format_to(std::back_inserter(result), std::dynamic_format(format_string), input);
+    }
+    return result;
+  } else {
+    return std::string(std::invoke(formatter.value.function, input));
+  }
+}
+
+template <std::meta::info m>
+consteval bool has_format() {
+  static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
+
+  template for (constexpr auto a : annotations) {
+    static constexpr auto a_t = std::meta::type_of(a);
+    if constexpr (std::meta::has_template_arguments(a_t) &&
+                  std::meta::template_of(a_t) == ^^::serial_xml::format) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <std::meta::info m>
+consteval auto get_defined_format() {
+  static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
+
+  template for (constexpr auto a : annotations) {
+    static constexpr auto a_t = std::meta::type_of(a);
+    if constexpr (std::meta::has_template_arguments(a_t) &&
+                  std::meta::template_of(a_t) == ^^::serial_xml::format) {
+      static constexpr auto value = std::meta::extract<typename[:a_t:]>(a);
+      return format_config{value};
+    }
+  }
+
+  std::unreachable();
+}
+
+template <std::meta::info m>
+consteval auto get_format() {
+  if constexpr (has_format<m>()) {
+    return get_defined_format<m>();
+  } else {
+    return format_config{serial_xml::format{""}};
+  }
+}
 
 export template <std::size_t N1 = 1, std::size_t N2 = 1>
 struct iter {
@@ -132,7 +213,7 @@ consteval bool is_stl_handled() {
 
 template <std::meta::info m>
 consteval auto get_annotations()
-    -> structural_tuple::tuple<bool, bool, bool, bool, bool, bool, char const*,
+    -> structural_tuple::tuple<bool, bool, bool, bool, bool, bool,
                                std::pair<char const*, char const*>, char const*, bool> {
   static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(m));
 
@@ -144,7 +225,7 @@ consteval auto get_annotations()
   bool is_unpack = std::meta::is_class_type(value_m_t<m>) && !std::formattable<value_t<m>, char> &&
                    !is_stl_handled<value_m_t<m>>();
 
-  std::optional<std::string> custom_format;
+  bool has_custom_format_function = false;
   std::optional<std::pair<std::string, std::string>> iter_names;
 
   std::string name;
@@ -172,7 +253,9 @@ consteval auto get_annotations()
     } else if constexpr (std::meta::has_template_arguments(a_t)) {
       if constexpr (std::meta::template_of(a_t) == ^^::serial_xml::format) {
         static constexpr auto format_value = std::meta::extract<typename[:a_t:]>(a);
-        custom_format = std::string(format_value.value);
+        if constexpr (!std::same_as<decltype(format_value.function), std::nullptr_t>) {
+          has_custom_format_function = true;
+        }
       } else if constexpr (std::meta::template_of(a_t) == ^^::serial_xml::iter) {
         if constexpr (!std::ranges::range<value_t<m>>) {
           throw std::logic_error(
@@ -219,6 +302,10 @@ consteval auto get_annotations()
     }
   }
 
+  if (has_custom_format_function) {
+    is_unpack = false;
+  }
+
   if (name.empty()) {
     if constexpr (std::meta::has_identifier(m)) {
       static constexpr auto temp_name = std::meta::identifier_of(m);
@@ -228,19 +315,18 @@ consteval auto get_annotations()
     }
   }
 
-  return structural_tuple::tuple{
-      is_attribute,
-      is_cdata,
-      is_no_iter,
-      is_raw,
-      is_skip,
-      is_unpack,
-      (custom_format.has_value() ? std::define_static_string(custom_format.value()) : nullptr),
-      (iter_names.has_value()) ? std::make_pair(std::define_static_string(iter_names->first),
-                                                std::define_static_string(iter_names->second))
-                               : std::make_pair<char const*, char const*>(nullptr, nullptr),
-      std::define_static_string(name),
-      is_exclude_on_empty};
+  return structural_tuple::tuple{is_attribute,
+                                 is_cdata,
+                                 is_no_iter,
+                                 is_raw,
+                                 is_skip,
+                                 is_unpack,
+                                 (iter_names.has_value())
+                                     ? std::make_pair(std::define_static_string(iter_names->first),
+                                                      std::define_static_string(iter_names->second))
+                                     : std::make_pair<char const*, char const*>(nullptr, nullptr),
+                                 std::define_static_string(name),
+                                 is_exclude_on_empty};
 }
 
 template <std::meta::info m>
@@ -278,10 +364,10 @@ consteval auto get_members() {
 
   std::vector<
       std::pair<std::meta::info,
-                structural_tuple::tuple<bool, bool, bool, bool, char const*,
-                                        std::pair<char const*, char const*>, char const*, bool>>>
+                structural_tuple::tuple<bool, bool, bool, bool, std::pair<char const*, char const*>,
+                                        char const*, bool>>>
       child_annotations;
-  std::vector<std::pair<std::meta::info, structural_tuple::tuple<char const*, char const*>>>
+  std::vector<std::pair<std::meta::info, structural_tuple::tuple<char const*>>>
       attribute_annotations;
 
   template for (constexpr auto m : members) {
@@ -333,16 +419,14 @@ consteval auto get_members() {
 
       if constexpr (structural_tuple::get<0>(m_annotations)) {
         attribute_annotations.push_back(
-            std::make_pair(m, structural_tuple::tuple{structural_tuple::get<6>(m_annotations),
-                                                      structural_tuple::get<8>(m_annotations)}));
+            std::make_pair(m, structural_tuple::tuple{structural_tuple::get<7>(m_annotations)}));
       } else {
         child_annotations.push_back(std::make_pair(
-            m,
-            structural_tuple::tuple{
-                structural_tuple::get<1>(m_annotations), structural_tuple::get<2>(m_annotations),
-                structural_tuple::get<3>(m_annotations), structural_tuple::get<5>(m_annotations),
-                structural_tuple::get<6>(m_annotations), structural_tuple::get<7>(m_annotations),
-                structural_tuple::get<8>(m_annotations), structural_tuple::get<9>(m_annotations)}));
+            m, structural_tuple::tuple{
+                   structural_tuple::get<1>(m_annotations), structural_tuple::get<2>(m_annotations),
+                   structural_tuple::get<3>(m_annotations), structural_tuple::get<5>(m_annotations),
+                   structural_tuple::get<6>(m_annotations), structural_tuple::get<7>(m_annotations),
+                   structural_tuple::get<8>(m_annotations)}));
       }
     }
   }
@@ -536,7 +620,7 @@ auto copy_with_escapes(char* buf, std::string_view input, std::size_t padded_siz
   return buf - original_buf;
 }
 
-template <char const* name, char const* format>
+template <char const* name, auto formatter>
 void add_attribute(std::string& result, std::string& buffer, const auto& value) {
   using T = std::decay_t<decltype(value)>;
   static constexpr auto m_t = ^^std::decay_t<decltype(value)>;
@@ -544,9 +628,7 @@ void add_attribute(std::string& result, std::string& buffer, const auto& value) 
   static constexpr auto prefix_result = get_attribute_prefix<name>();
   static constexpr auto prefix = std::get<0>(prefix_result);
   static constexpr auto prefix_size = std::get<1>(prefix_result);
-  static constexpr auto gen_format = std::define_static_string(std::string("{:") + format + "}");
-
-  if constexpr (std::is_arithmetic_v<T> && sizeof(T) <= 64 && std::strcmp(format, "") == 0) {
+  if constexpr (formatter.is_empty() && std::is_arithmetic_v<T> && sizeof(T) <= 64) {
     if constexpr (std::is_floating_point_v<T>) {
       static constexpr auto format_resize = 311 + prefix_size + 1;
 
@@ -586,11 +668,10 @@ void add_attribute(std::string& result, std::string& buffer, const auto& value) 
       });
     }
   } else {
-    if constexpr (std::is_same_v<T, std::string> && std::strcmp(format, "") == 0) {
+    if constexpr (formatter.is_empty() && std::is_same_v<T, std::string>) {
       buffer = std::ref(value);
     } else {
-      buffer.clear();
-      std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
+      buffer = format_value<formatter>(value);
     }
 
     auto padded_size = get_escape_bitmask(buffer);
@@ -635,7 +716,7 @@ consteval auto get_tags() {
                     std::define_static_string(closing_tag), closing_tag.size()};
 }
 
-template <char const* name, bool is_cdata, char const* format>
+template <char const* name, bool is_cdata, auto formatter>
 void add_child(std::string& result, std::string& buffer, const auto& value) {
   using T = typename std::decay_t<decltype(value)>;
   static constexpr auto m_t = ^^T;
@@ -649,7 +730,7 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
 
   const auto original_size = result.size();
 
-  if constexpr (std::is_arithmetic_v<T> && sizeof(T) <= 64 && std::strcmp(format, "") == 0) {
+  if constexpr (formatter.is_empty() && std::is_arithmetic_v<T> && sizeof(T) <= 64) {
     if constexpr (std::is_floating_point_v<T>) {
       static constexpr auto format_resize = 311 + combined_size;
       result.resize_and_overwrite(original_size + format_resize,
@@ -684,28 +765,21 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
       });
     }
   } else if constexpr (is_cdata) {
-    if constexpr (std::strcmp(format, "") == 0 &&
+    if constexpr (formatter.is_empty() &&
                   (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>)) {
       result += "<![CDATA[";
       result += value;
       result += "]]>";
     } else {
-      static constexpr char const* gen_format =
-          std::define_static_string(std::string("{:") + format + '}');
-
       result += "<![CDATA[";
-      std::format_to(std::back_inserter(result), std::dynamic_format(gen_format), value);
+      result += format_value<formatter>(value);
       result += "]]>";
     }
   } else {
-    static constexpr char const* gen_format =
-        std::define_static_string(std::string("{:") + format + '}');
-
-    if constexpr (std::is_same_v<T, std::string> && std::strcmp(format, "") == 0) {
+    if constexpr (formatter.is_empty() && std::is_same_v<T, std::string>) {
       buffer = std::ref(value);
     } else {
-      buffer.clear();
-      std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format), value);
+      buffer = format_value<formatter>(value);
     }
 
     auto padded_size = get_escape_bitmask(buffer);
@@ -737,7 +811,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
             const std::string& fixed_name = "");
 
 template <bool is_attribute, bool is_cdata, bool is_no_iter, bool is_raw, bool is_exclude_on_empty,
-          bool is_unpack, char const* name, char const* format>
+          bool is_unpack, char const* name, auto formatter>
 auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> bool {
   using T = std::decay_t<decltype(value)>;
 
@@ -761,10 +835,11 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
         static constexpr auto item_m_t = std::meta::dealias(^^decltype(value[0]));
 
         for (const auto& item : value) {
-          if constexpr (is_unpack || !std::formattable<typename[:item_m_t:], char>) {
+          if constexpr (is_unpack ||
+                        (!std::formattable<typename[:item_m_t:], char> && formatter.is_empty())) {
             to_xml(item, result, buffer, false, std::string(single_name));
           } else {
-            add_child<single_name, is_cdata, format>(result, buffer, item);
+            add_child<single_name, is_cdata, formatter>(result, buffer, item);
           }
         }
 
@@ -787,12 +862,12 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
     }
 
     if constexpr (is_attribute) {
-      add_attribute<name, format>(result, buffer, value.value());
+      add_attribute<name, formatter>(result, buffer, value.value());
     } else {
       if constexpr (is_unpack) {
         to_xml(value.value(), result, buffer, false, std::string(name));
       } else {
-        add_child<name, is_cdata, format>(result, buffer, value.value());
+        add_child<name, is_cdata, formatter>(result, buffer, value.value());
       }
     }
 
@@ -844,9 +919,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     static constexpr auto m = m_a.first;
     static constexpr auto m_annotations = m_a.second;
 
-    static constexpr auto custom_format = structural_tuple::get<0>(m_annotations);
-
-    static constexpr auto m_name = structural_tuple::get<1>(m_annotations);
+    static constexpr auto formatter = get_format<m>();
+    static constexpr auto m_name = structural_tuple::get<0>(m_annotations);
 
     static constexpr auto view_name = std::string_view(m_name);
 
@@ -858,13 +932,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
         std::string("Invalid XML name: '") + std::string(view_name) + "'");
 
     if constexpr (is_std) {
-      handle_stl<true, false, true, false, false, false, m_name,
-                 (custom_format) ? custom_format : std::define_static_string("")>(
-          result, buffer, get_value<m>(value));
-    } else if constexpr (custom_format != nullptr) {
-      add_attribute<m_name, custom_format>(result, buffer, get_value<m>(value));
+      handle_stl<true, false, true, false, false, false, m_name, formatter>(result, buffer,
+                                                                            get_value<m>(value));
     } else {
-      add_attribute<m_name, std::define_static_string("")>(result, buffer, get_value<m>(value));
+      add_attribute<m_name, formatter>(result, buffer, get_value<m>(value));
     }
   }
 
@@ -884,12 +955,12 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       static constexpr auto is_raw = structural_tuple::get<2>(m_annotations);
       static constexpr auto is_unpack = structural_tuple::get<3>(m_annotations);
 
-      static constexpr auto custom_format = structural_tuple::get<4>(m_annotations);
-      static constexpr auto iter_names = structural_tuple::get<5>(m_annotations);
+      static constexpr auto formatter = get_format<m>();
+      static constexpr auto iter_names = structural_tuple::get<4>(m_annotations);
 
-      static constexpr auto m_name = structural_tuple::get<6>(m_annotations);
+      static constexpr auto m_name = structural_tuple::get<5>(m_annotations);
 
-      static constexpr auto is_exclude_on_empty = structural_tuple::get<7>(m_annotations);
+      static constexpr auto is_exclude_on_empty = structural_tuple::get<6>(m_annotations);
 
       static constexpr auto view_name = std::string_view(m_name);
 
@@ -903,8 +974,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
       if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
         handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
-                   (custom_format) ? custom_format : std::define_static_string("")>(
-            result, buffer, get_value<m>(value));
+                   formatter>(result, buffer, get_value<m>(value));
       } else {
         if constexpr (iter_names.first != nullptr && std::meta::is_class_type(value_m_t<m>) &&
                       std::ranges::range<value_t<m>>) {
@@ -918,12 +988,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
             if constexpr (is_unpack) {
               to_xml(item, result, buffer, false, iter_names.first);
             } else {
-              if constexpr (custom_format != nullptr) {
-                add_child<iter_names.first, is_cdata, custom_format>(result, buffer, item);
-              } else {
-                add_child<iter_names.first, is_cdata, std::define_static_string("")>(result, buffer,
-                                                                                     item);
-              }
+              add_child<iter_names.first, is_cdata, formatter>(result, buffer, item);
             }
           }
 
@@ -936,15 +1001,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
           to_xml(get_value<m>(value), result, buffer, false, m_name);
         } else {
           if constexpr (is_raw) {
-            buffer.clear();
-            if constexpr (custom_format != nullptr) {
-              static constexpr auto gen_format =
-                  std::define_static_string(std::string("{:") + custom_format + '}');
-              std::format_to(std::back_inserter(buffer), std::dynamic_format(gen_format),
-                             get_value<m>(value));
-            } else {
-              std::format_to(std::back_inserter(buffer), "{}", get_value<m>(value));
-            }
+            buffer = format_value<formatter>(get_value<m>(value));
 
             auto padded_size = get_escape_bitmask(buffer);
 
@@ -958,12 +1015,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                   return original_size + copy_with_escapes(buf, buffer, padded_size);
                 });
           } else {
-            if constexpr (custom_format != nullptr) {
-              add_child<m_name, is_cdata, custom_format>(result, buffer, get_value<m>(value));
-            } else {
-              add_child<m_name, is_cdata, std::define_static_string("")>(result, buffer,
-                                                                         get_value<m>(value));
-            }
+            add_child<m_name, is_cdata, formatter>(result, buffer, get_value<m>(value));
           }
         }
       }

@@ -555,6 +555,49 @@ TEST(Formatting, StringChild) {
             "<FormattedStringChild><text>****text****</text></FormattedStringChild>");
 }
 
+std::string format_with_prefix(const auto& value) { return "custom-" + std::to_string(value); }
+
+TEST(Formatting, CustomFunction) {
+  struct CustomFormattedValues {
+    [[ = serial_xml::attribute, = serial_xml::format{format_with_prefix<int>} ]] int attribute;
+    [[= serial_xml::format{format_with_prefix<int>}]] int child;
+    [[ = serial_xml::raw, = serial_xml::format{format_with_prefix<int>} ]] int raw;
+  };
+  CustomFormattedValues obj{1, 2, 3};
+
+  ASSERT_EQ(clean_to_xml(obj),
+            "<CustomFormattedValues attribute=\"custom-1\"><child>custom-2</child>custom-3"
+            "</CustomFormattedValues>");
+}
+
+std::string surround_string(const std::string& value) { return "[" + value + "]"; }
+
+TEST(Formatting, CustomFunctionBypassesStringFastPath) {
+  struct CustomFormattedString {
+    [[= serial_xml::format{surround_string}]] std::string text;
+  };
+  CustomFormattedString obj{"text"};
+
+  ASSERT_EQ(clean_to_xml(obj),
+            "<CustomFormattedString><text>[text]</text></CustomFormattedString>");
+}
+
+struct CustomFormatInner {
+  int ignored;
+};
+
+std::string format_inner(const CustomFormatInner&) { return "formatted"; }
+
+TEST(Formatting, CustomFunctionPreventsUnpacking) {
+  struct CustomFormattedOuter {
+    [[= serial_xml::format{format_inner}]] CustomFormatInner inner;
+  };
+  CustomFormattedOuter obj{{42}};
+
+  ASSERT_EQ(clean_to_xml(obj),
+            "<CustomFormattedOuter><inner>formatted</inner></CustomFormattedOuter>");
+}
+
 TEST(Functions, Basic) {
   struct BasicFunction {
     int x() const { return 3; }
