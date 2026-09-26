@@ -26,9 +26,16 @@ struct NoIter {
   [[= serial_xml::no_iter]] std::vector<int> values;
 };
 
+// Other standard ranges, including ordered maps, use the same automatic policy.
+struct MapExample {
+  std::map<std::string, int> values;
+};
+
 int main() {
   std::print("Vector (auto-iterated):\n  {}\n", serial_xml::to_xml(VectorExample{{1, 2, 3}}));
   std::print("Empty vector:\n  {}\n", serial_xml::to_xml(EmptyVector{{}}));
   std::print("Exclude on empty (empty vector):\n  {}\n", serial_xml::to_xml(ExcludeOnEmpty{{}}));
   std::print("No-iterate (formatted as a whole):\n  {}\n", serial_xml::to_xml(NoIter{{1, 2, 3}}));
+  std::print("Map entries:\n  {}\n",
+             serial_xml::to_xml(MapExample{{{"answer", 42}, {"meaning", 42}}}));
 }

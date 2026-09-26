@@ -109,7 +109,7 @@ The main reason this library is so much faster is because all of the above ones 
 
 This library is annotation driven, which means that most customization points are exposed via C++26 annotations. The reason behind this design choice is to create consistency and visually associate the output structure to the definition.
 
-By default, all members are treated as children of the parent struct with closing tags the same as the name of the member. However, if a struct is not formattable, it by default is unpacked. Many STL ranges and the `std::optional` container are also handled by default. A `std::optional` member is omitted if it does not contain a value.
+By default, all members are treated as children of the parent struct with closing tags the same as the name of the member. However, if a struct is not formattable, it by default is unpacked. Any `std::ranges::range` is iterated automatically except strings and string views, which remain scalar text. Each ordinary range item uses an `<element>` tag. Map entries use `<element><key>…</key><value>…</value></element>`. A `std::optional` member is omitted if it does not contain a value; a present optional is serialized as its contained value.
 
 This is the complete list of annotations:
 - `[[=attribute]]` -- Mark a struct member as a XML attribute instead of a child.
@@ -118,7 +118,7 @@ This is the complete list of annotations:
 - `[[=name{"custom_name"}]]` -- Specify the name of this attribute or child tag to be something other than the name of the member. Note: You can also specify this on the struct to control its closing tag (eg. generate `person` instead of `Person` for `struct Person` with `[[=name{"person"}]]`).
 - `[[=unpack]]` -- Instead of calling `std::format` on the member object, generate an enclosing XML tag for it and serialize its members as well.
 - `[[=no_unpack]]` -- Call `std::format` on the member object instead of breaking it down into its children. Opposite of `unpack`.
-- `[[=iter{a, b}]]` -- For classes satisfying `std::ranges::range`, iterate through each member instead of directly calling `std::format`. The first (optional) parameter is the name of the tag for each element in the range. The second (optional) parameter is the name of the range tag enclosing each element.
+- `[[=iter{a, b}]]` -- For classes satisfying `std::ranges::range`, iterate through each member instead of directly calling `std::format`. The first (optional) parameter is the name of the tag for each element in the range. The second (optional) parameter is the name of the range tag enclosing each element. Automatic range iteration uses the same naming defaults.
 - `[[=no_iter]]` -- The opposite of `iter` to disable automatic iteration of STL ranges. See the confusion points for more information on STL handling.
 - `[[=format{"format_specifier"}]]` -- Add a format specifier in the call to `std::format` for that member. Do not prefix with a colon (`:`) as the library handles that on its own. `[[=format{format_function}]]` instead calls a custom formatting function that accepts the member value and returns a string-like value.
 - `[[=cdata]]` -- Emit the value inside `cdata` (`<![CDATA[your_content]]>`) tags.
@@ -126,14 +126,7 @@ This is the complete list of annotations:
 
 ### Common Confusion Points
 
-1. For *some* STL containers, the library automatically iterates through them. Therefore, your generated XML will not match the expectations. To avoid this, add the `[[=no_iter]]` annotation to object member. The current list of STL containers that are automatically iterated:
-    - `std::vector`
-    - `std::array`
-    - `std::inplace_vector`
-    - `std::deque`
-    - `std::forward_list`
-    - `std::span`
-    - `std::valarray`
+1. Ranges are automatically iterated by default, including standard containers, views, and user-defined range types. Strings and string views are treated as scalar text. Add `[[=no_iter]]` to a member to format the range as a whole.
 1. The precedence order for STL handled ranges is as follows:
     1. `exclude_on_empty`
     1. `raw` -- note that this only applies to the outer layer of tags for the range. Not each individual element in the range
