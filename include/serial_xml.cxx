@@ -1,7 +1,6 @@
 module;
 
 #include <cstdint>
-#include <simd>  // GCC 16.1 does not have in this in the std module
 
 export module serial_xml;
 
@@ -50,6 +49,153 @@ constexpr bool is_alpha(const char c) { return (c >= 'A' && c <= 'Z') || (c >= '
 constexpr bool is_num(const char c) { return (c >= '0' && c <= '9'); }
 
 constexpr bool is_alnum(const char c) { return is_alpha(c) || is_num(c); }
+
+// Decode UTF-8 strictly so malformed input cannot produce malformed XML.
+constexpr bool next_code_point(std::string_view text, std::size_t& offset, char32_t& value) {
+  if (offset == text.size()) return false;
+  const auto first = static_cast<unsigned char>(text[offset++]);
+  if (first < 0x80) {
+    value = first;
+    return true;
+  }
+  int extra = 0;
+  char32_t code = 0;
+  char32_t minimum = 0;
+  if (first >= 0xC2 && first <= 0xDF) {
+    extra = 1;
+    code = first & 0x1F;
+    minimum = 0x80;
+  } else if (first >= 0xE0 && first <= 0xEF) {
+    extra = 2;
+    code = first & 0x0F;
+    minimum = 0x800;
+  } else if (first >= 0xF0 && first <= 0xF4) {
+    extra = 3;
+    code = first & 0x07;
+    minimum = 0x10000;
+  } else {
+    return false;
+  }
+  if (text.size() - offset < static_cast<std::size_t>(extra)) return false;
+  for (int i = 0; i < extra; ++i) {
+    const auto next = static_cast<unsigned char>(text[offset++]);
+    if ((next & 0xC0) != 0x80) return false;
+    code = (code << 6) | (next & 0x3F);
+  }
+  if (code < minimum || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return false;
+  value = code;
+  return true;
+}
+
+constexpr bool is_xml_character(char32_t c) {
+  return c == 0x9 || c == 0xA || c == 0xD || (c >= 0x20 && c <= 0xD7FF) ||
+         (c >= 0xE000 && c <= 0xFFFD) || (c >= 0x10000 && c <= 0x10FFFF);
+}
+
+constexpr bool is_name_start(char32_t c) {
+  return c == ':' || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+         (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0x2FF) ||
+         (c >= 0x370 && c <= 0x37D) || (c >= 0x37F && c <= 0x1FFF) ||
+         (c >= 0x200C && c <= 0x200D) || (c >= 0x2070 && c <= 0x218F) ||
+         (c >= 0x2C00 && c <= 0x2FEF) || (c >= 0x3001 && c <= 0xD7FF) ||
+         (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFFD) ||
+         (c >= 0x10000 && c <= 0xEFFFF);
+}
+
+constexpr bool is_name_character(char32_t c) {
+  return is_name_start(c) || c == '-' || c == '.' || (c >= '0' && c <= '9') || c == 0xB7 ||
+         (c >= 0x300 && c <= 0x36F) || (c >= 0x203F && c <= 0x2040);
+}
+
+constexpr bool is_valid_xml_name(std::string_view text) {
+  if (text.empty()) return false;
+  std::size_t offset = 0;
+  char32_t code = 0;
+  if (!next_code_point(text, offset, code) || !is_name_start(code)) return false;
+  while (offset < text.size()) {
+    if (!next_code_point(text, offset, code) || !is_name_character(code)) return false;
+  }
+  // XML reserves names beginning with any case spelling of "xml".
+  if (text.size() >= 3) {
+    auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; };
+    if (lower(text[0]) == 'x' && lower(text[1]) == 'm' && lower(text[2]) == 'l') return false;
+  }
+  return true;
+}
+
+void validate_xml_characters(std::string_view text) {
+  std::size_t offset = 0;
+  char32_t code = 0;
+  while (offset < text.size()) {
+    if (!next_code_point(text, offset, code) || !is_xml_character(code)) {
+      throw std::invalid_argument("Invalid XML character or UTF-8 sequence");
+    }
+  }
+}
+
+void append_escaped(std::string& result, std::string_view text, bool attribute_value = false) {
+  validate_xml_characters(text);
+  for (char ch : text) {
+    switch (ch) {
+      case '<':
+        result += "&lt;";
+        break;
+      case '>':
+        result += "&gt;";
+        break;
+      case '&':
+        result += "&amp;";
+        break;
+      case '\'':
+        result += "&apos;";
+        break;
+      case '"':
+        result += "&quot;";
+        break;
+      case '\t':
+        if (attribute_value) {
+          result += "&#x9;";
+          break;
+        }
+        result += ch;
+        break;
+      case '\n':
+        if (attribute_value) {
+          result += "&#xA;";
+          break;
+        }
+        result += ch;
+        break;
+      case '\r':
+        result += "&#xD;";
+        break;
+      default:
+        result += ch;
+    }
+  }
+}
+
+void append_cdata(std::string& result, std::string_view text) {
+  validate_xml_characters(text);
+  result += "<![CDATA[";
+  std::size_t start = 0;
+  while (true) {
+    const auto terminator = text.find("]]>", start);
+    const auto carriage_return = text.find('\r', start);
+    if (terminator == std::string_view::npos && carriage_return == std::string_view::npos) break;
+    if (carriage_return < terminator) {
+      result.append(text.substr(start, carriage_return - start));
+      result += "]]>&#xD;<![CDATA[";
+      start = carriage_return + 1;
+    } else {
+      result.append(text.substr(start, terminator + 2 - start));
+      result += "]]><![CDATA[>";
+      start = terminator + 3;
+    }
+  }
+  result.append(text.substr(start));
+  result += "]]>";
+}
 
 export template <std::size_t N = 1, typename F = std::nullptr_t>
 struct format {
@@ -447,179 +593,6 @@ consteval auto get_attribute_prefix() {
   return std::make_tuple(std::define_static_string(prefix), prefix.size());
 }
 
-template <std::size_t simd_size>
-consteval auto get_type() -> std::meta::info {
-  static_assert(simd_size >= 8, "SIMD mask size must be at least 8 elements.");
-
-  if constexpr (simd_size <= 8) {
-    return ^^uint8_t;
-  }
-  if constexpr (simd_size <= 16) {
-    return ^^uint16_t;
-  }
-  if constexpr (simd_size <= 32) {
-    return ^^uint32_t;
-  }
-  return ^^uint64_t;
-}
-
-template <typename T>
-class Allocator8ByteAligned {
- public:
-  using value_type = T;
-
-  Allocator8ByteAligned() noexcept = default;
-
-  template <typename U>
-  Allocator8ByteAligned(const Allocator8ByteAligned<U>&) noexcept {}
-
-  [[nodiscard]] T* allocate(const std::size_t n) {
-    if (n == 0) {
-      return nullptr;
-    }
-
-    return static_cast<T*>(std::aligned_alloc(8, n * sizeof(T)));
-  }
-
-  void deallocate(T* p, const std::size_t n) noexcept { std::free(p); }
-};
-
-template <typename T, typename U>
-constexpr bool operator==(const Allocator8ByteAligned<T>&,
-                          const Allocator8ByteAligned<U>&) noexcept {
-  return true;
-}
-
-// clang-format off
-thread_local std::vector<typename[:get_type<std::simd::vec<char>::size()>():],  Allocator8ByteAligned<typename[:get_type<std::simd::vec<char>::size()>():]>>
-    escape_flags;
-// clang-format on
-
-auto get_escape_bitmask(std::string_view input) -> std::size_t {
-  using simd_t = std::simd::vec<char>;
-
-  std::size_t padded_size [[indeterminate]];
-  if ((input.size() % simd_t::size()) != 0) {
-    padded_size = (input.size() / simd_t::size()) + 1;
-  } else {
-    padded_size = input.size() / simd_t::size();
-  }
-
-  using FlagsT = typename[:get_type<simd_t::size()>():];
-  escape_flags.resize(std::max(sizeof(uint64_t) / sizeof(FlagsT), padded_size));
-
-  std::size_t i{0};
-
-  static constexpr auto idx_seq = std::make_index_sequence<simd_t::size()>{};
-
-  if (static_cast<std::size_t>(simd_t::size()) <= input.size()) {
-    const auto loop_end = input.size() - simd_t::size();
-    for (i = 0; i < loop_end; i += simd_t::size()) {
-      auto v = std::simd::unchecked_load<simd_t>(input.data() + i, simd_t::size());
-
-      auto mask = (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
-
-      template for (constexpr auto j : idx_seq) {
-        escape_flags[i / (sizeof(FlagsT) * 8)] |= mask[static_cast<int>(j)] << j;
-      }
-    }
-
-    const auto remaining = simd_t::size() - (i - input.size());
-    auto v = std::simd::partial_load<simd_t>(input.data() + (input.size() - remaining), remaining);
-
-    auto mask = (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
-
-    static constexpr auto n_idx_seq = std::make_index_sequence<simd_t::size() & 7>{};
-
-    template for (constexpr auto j : n_idx_seq) {
-      escape_flags[i / (sizeof(FlagsT) * 8)] |= mask[static_cast<int>(j)] << j;
-    }
-  } else {
-    auto v = std::simd::partial_load<simd_t>(input.data(), input.size());
-
-    auto mask = (v == '<') | (v == '>') | (v == '&') | (v == '"') | (v == '\'');
-
-    template for (constexpr auto j : idx_seq) { escape_flags[0] |= mask[static_cast<int>(j)] << j; }
-  }
-
-  return padded_size;
-}
-
-auto count_escapes(std::size_t padded_size) -> int {
-  using T = std::ranges::range_value_t<decltype(escape_flags)>;
-
-  auto* escape_flags_ptr = reinterpret_cast<uint64_t*>(escape_flags.data());
-  int count = 0;
-  for (int i = 0;
-       i <
-       static_cast<int>(std::ceil(static_cast<double>(padded_size) * sizeof(T) / sizeof(uint64_t)));
-       ++i) {
-    count += std::popcount(escape_flags_ptr[i]);
-  }
-  return count;
-}
-
-auto copy_with_escapes(char* buf, std::string_view input, std::size_t padded_size) -> std::size_t {
-  using T = std::ranges::range_value_t<decltype(escape_flags)>;
-
-  const char* original_buf = buf;
-
-  auto* escape_flags_ptr = reinterpret_cast<std::uint64_t*>(escape_flags.data());
-
-  for (std::size_t i = 0;
-       i <
-       static_cast<int>(std::ceil(static_cast<double>(padded_size) * sizeof(T) / sizeof(uint64_t)));
-       ++i) {
-    std::size_t last = i * sizeof(std::uint64_t);
-    int prev_idx = 0;
-    int idx [[indeterminate]];
-
-    while (escape_flags_ptr[i] != 0) {
-      idx = std::countr_zero(escape_flags_ptr[i]);
-
-      std::memcpy(buf, input.data() + last + prev_idx, idx - prev_idx);
-      buf += (idx - prev_idx);
-
-      prev_idx = idx + 1;
-
-      switch (input[last + idx]) {
-        case '<':
-          std::memcpy(buf, "&lt;", 4);
-          buf += 4;
-          break;
-        case '>':
-          std::memcpy(buf, "&gt;", 4);
-          buf += 4;
-          break;
-        case '&':
-          std::memcpy(buf, "&amp;", 5);
-          buf += 5;
-          break;
-        case '"':
-          std::memcpy(buf, "&quot;", 6);
-          buf += 6;
-          break;
-        case '\'':
-          std::memcpy(buf, "&apos;", 6);
-          buf += 6;
-          break;
-        default:
-          throw std::logic_error("Unexpected character for escaping");
-      }
-
-      escape_flags_ptr[i] &= (escape_flags_ptr[i] - 1);
-    }
-
-    if (static_cast<std::size_t>(prev_idx) < 63) {
-      std::memcpy(buf, input.data() + last + prev_idx,
-                  std::min(63uz - prev_idx, input.size() - last - prev_idx));
-      buf += std::min(63uz - prev_idx, input.size() - last - prev_idx);
-    }
-  }
-
-  return buf - original_buf;
-}
-
 template <char const* name, auto formatter>
 void add_attribute(std::string& result, std::string& buffer, const auto& value) {
   using T = std::decay_t<decltype(value)>;
@@ -674,28 +647,9 @@ void add_attribute(std::string& result, std::string& buffer, const auto& value) 
       buffer = format_value<formatter>(value);
     }
 
-    auto padded_size = get_escape_bitmask(buffer);
-
-    auto num_escapes = count_escapes(padded_size);
-
-    const auto original_size = result.size();
-
-    result.resize_and_overwrite(original_size + prefix_size + buffer.size() + 1 + (num_escapes * 5),
-                                [&](char* buf, std::size_t) {
-                                  buf += original_size;
-
-                                  const char* original_buf = buf;
-
-                                  std::memcpy(buf, prefix, prefix_size);
-
-                                  buf += prefix_size;
-
-                                  buf += copy_with_escapes(buf, buffer, padded_size);
-
-                                  *buf = '"';
-
-                                  return original_size + (buf + 1) - original_buf;
-                                });
+    result.append(prefix, prefix_size);
+    append_escaped(result, buffer, true);
+    result += '"';
   }
 }
 
@@ -745,7 +699,7 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
 
                                     std::memcpy(ptr, closing_tag, closing_tag_size);
 
-                                    return (combined_size + (ptr - buf));
+                                    return original_size + combined_size + (ptr - buf);
                                   });
     } else if constexpr (std::is_integral_v<T>) {
       static constexpr auto format_resize = 20 + combined_size;
@@ -767,13 +721,9 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
   } else if constexpr (is_cdata) {
     if constexpr (formatter.is_empty() &&
                   (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>)) {
-      result += "<![CDATA[";
-      result += value;
-      result += "]]>";
+      append_cdata(result, value);
     } else {
-      result += "<![CDATA[";
-      result += format_value<formatter>(value);
-      result += "]]>";
+      append_cdata(result, format_value<formatter>(value));
     }
   } else {
     if constexpr (formatter.is_empty() && std::is_same_v<T, std::string>) {
@@ -782,26 +732,9 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
       buffer = format_value<formatter>(value);
     }
 
-    auto padded_size = get_escape_bitmask(buffer);
-
-    auto num_escapes = count_escapes(padded_size);
-
-    result.resize_and_overwrite(original_size + combined_size + buffer.size() + (num_escapes * 5),
-                                [&](char* buf, std::size_t) {
-                                  const auto original_buf = buf;
-
-                                  buf += original_size;
-
-                                  std::memcpy(buf, opening_tag, opening_tag_size);
-
-                                  buf += opening_tag_size;
-
-                                  buf += copy_with_escapes(buf, buffer, padded_size);
-
-                                  std::memcpy(buf, closing_tag, closing_tag_size);
-
-                                  return (buf + closing_tag_size) - original_buf;
-                                });
+    result.append(opening_tag, opening_tag_size);
+    append_escaped(result, buffer);
+    result.append(closing_tag, closing_tag_size);
   }
 }
 
@@ -907,6 +840,9 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   }
 
   std::string name{buffer};
+  if (!is_valid_xml_name(name)) {
+    throw std::invalid_argument("Invalid XML name: '" + name + "'");
+  }
   std::format_to(std::back_inserter(result), "<{}", name);
 
   static constexpr auto members = get_members<M>();
@@ -924,12 +860,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
     static constexpr auto view_name = std::string_view(m_name);
 
-    static_assert(
-        std::ranges::all_of(
-            view_name, [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
-            !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
-              is_num(view_name[0]) || std::ranges::starts_with(view_name, std::string_view("xml"))),
-        std::string("Invalid XML name: '") + std::string(view_name) + "'");
+    static_assert(is_valid_xml_name(view_name),
+                  std::string("Invalid XML name: '") + std::string(view_name) + "'");
 
     if constexpr (is_std) {
       handle_stl<true, false, true, false, false, false, m_name, formatter>(result, buffer,
@@ -964,13 +896,13 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
       static constexpr auto view_name = std::string_view(m_name);
 
-      static_assert(
-          std::ranges::all_of(
-              view_name, [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
-              !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
-                is_num(view_name[0]) ||
-                std::ranges::starts_with(view_name, std::string_view("xml"))),
-          std::string("Invalid XML name: '") + std::string(view_name) + "'");
+      static_assert(is_valid_xml_name(view_name),
+                    std::string("Invalid XML name: '") + std::string(view_name) + "'");
+
+      if constexpr (iter_names.first != nullptr) {
+        static_assert(is_valid_xml_name(iter_names.first), "Invalid XML iterator item name");
+        static_assert(is_valid_xml_name(iter_names.second), "Invalid XML iterator container name");
+      }
 
       if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
         handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
@@ -1003,17 +935,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
           if constexpr (is_raw) {
             buffer = format_value<formatter>(get_value<m>(value));
 
-            auto padded_size = get_escape_bitmask(buffer);
-
-            auto num_escapes = count_escapes(padded_size);
-
-            const auto original_size = result.size();
-            result.resize_and_overwrite(
-                original_size + buffer.size() + (num_escapes * 5), [&](char* buf, std::size_t) {
-                  buf += original_size;
-
-                  return original_size + copy_with_escapes(buf, buffer, padded_size);
-                });
+            append_escaped(result, buffer);
           } else {
             add_child<m_name, is_cdata, formatter>(result, buffer, get_value<m>(value));
           }
@@ -1043,9 +965,6 @@ auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "
   buffer.reserve(256);
 
   to_xml(value, result, buffer, first, fixed_name);
-
-  escape_flags.clear();
-  escape_flags.shrink_to_fit();
 
   return result;
 }

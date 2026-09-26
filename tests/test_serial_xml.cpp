@@ -459,6 +459,56 @@ TEST(Basic, CData) {
   ASSERT_EQ(clean_to_xml(obj), "<CData><![CDATA[text<empty> & stuff]]></CData>");
 }
 
+TEST(XmlCorrectness, CDataSplitsTerminator) {
+  struct Content {
+    [[= serial_xml::cdata]] std::string text;
+  };
+  ASSERT_EQ(clean_to_xml(Content{"a]]>b]]>c"}),
+            "<Content><![CDATA[a]]]]><![CDATA[>b]]]]><![CDATA[>c]]></Content>");
+  ASSERT_EQ(clean_to_xml(Content{"a\rb"}), "<Content><![CDATA[a]]>&#xD;<![CDATA[b]]></Content>");
+}
+
+TEST(XmlCorrectness, RejectsInvalidRootName) {
+  struct Content {};
+  EXPECT_THROW(serial_xml::to_xml(Content{}, false, "1root"), std::invalid_argument);
+  EXPECT_THROW(serial_xml::to_xml(Content{}, false, "bad name"), std::invalid_argument);
+  EXPECT_THROW(serial_xml::to_xml(Content{}, false, "XmLname"), std::invalid_argument);
+  EXPECT_EQ(serial_xml::to_xml(Content{}, false, "a:b"), "<a:b/>");
+  EXPECT_EQ(serial_xml::to_xml(Content{}, false, "caf\xC3\xA9"), "<caf\xC3\xA9/>");
+}
+
+TEST(XmlCorrectness, RejectsInvalidCharacters) {
+  struct Content {
+    [[= serial_xml::attribute]] std::string attribute;
+    std::string child;
+  };
+  EXPECT_THROW(clean_to_xml(Content{"ok", std::string("a\0b", 3)}), std::invalid_argument);
+  EXPECT_THROW(clean_to_xml(Content{std::string("a\x01", 2), "ok"}), std::invalid_argument);
+  EXPECT_THROW(clean_to_xml(Content{"ok", std::string("\xC0\xAF", 2)}), std::invalid_argument);
+  EXPECT_EQ(clean_to_xml(Content{"\t\n\r", "x\r\ny"}),
+            "<Content attribute=\"&#x9;&#xA;&#xD;\"><child>x&#xD;\ny</child></Content>");
+}
+
+TEST(XmlCorrectness, EscapesEachValueIndependently) {
+  struct Content {
+    std::string first;
+    std::string second;
+  };
+  EXPECT_EQ(clean_to_xml(Content{"<", "plain"}),
+            "<Content><first>&lt;</first><second>plain</second></Content>");
+}
+
+TEST(XmlCorrectness, RejectsInvalidRawAndCData) {
+  struct RawContent {
+    [[= serial_xml::raw]] std::string text;
+  };
+  struct CDataContent {
+    [[= serial_xml::cdata]] std::string text;
+  };
+  EXPECT_THROW(clean_to_xml(RawContent{std::string("\x01", 1)}), std::invalid_argument);
+  EXPECT_THROW(clean_to_xml(CDataContent{std::string("\xED\xA0\x80", 3)}), std::invalid_argument);
+}
+
 struct NoUnpackInner {
   int x;
 };
