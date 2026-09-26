@@ -164,6 +164,42 @@ TEST(STL, Vector) {
             "</values></Vector>");
 }
 
+TEST(Ranges, ForwardList) {
+  struct ForwardList {
+    std::forward_list<int> values;
+  };
+  ForwardList obj{{1, 2, 3}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<ForwardList><values><element>1</element><element>2</element><element>3</element>"
+            "</values></ForwardList>");
+}
+
+TEST(Ranges, Set) {
+  struct Set {
+    std::set<int> values;
+  };
+  Set obj{{3, 1, 2}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<Set><values><element>1</element><element>2</element><element>3</element></"
+            "values></Set>");
+}
+
+TEST(Ranges, Map) {
+  struct Map {
+    std::map<std::string, int> values;
+  };
+  Map obj{{{"answer", 42}}};
+  ASSERT_EQ(clean_to_xml(obj),
+            "<Map><values><element><key>answer</key><value>42</value></element></values></Map>");
+}
+
+TEST(Ranges, EmptyRange) {
+  struct EmptyRange {
+    std::set<int> values;
+  };
+  ASSERT_EQ(clean_to_xml(EmptyRange{}), "<EmptyRange><values/></EmptyRange>");
+}
+
 TEST(STL, EmptyVector) {
   struct EmptyVector {
     std::vector<int> values;
@@ -386,6 +422,14 @@ TEST(Iteration, IterSTL) {
   ASSERT_EQ(clean_to_xml(obj),
             "<IterSTL><container><c_val>1</c_val><c_val>2</c_val><c_val>3</"
             "c_val></container></IterSTL>");
+}
+
+TEST(Iteration, EmptyRange) {
+  struct EmptyIterRange {
+    [[= serial_xml::iter{"item", "items"}]] std::vector<int> values;
+  };
+
+  ASSERT_EQ(clean_to_xml(EmptyIterRange{}), "<EmptyIterRange><items/></EmptyIterRange>");
 }
 
 TEST(Iteration, SingleCharIter) {

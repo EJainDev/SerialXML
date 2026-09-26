@@ -196,20 +196,44 @@ using value_t = typename value_type<m>::t;
 template <std::meta::info m>
 constexpr auto value_m_t = value_type<m>::m_t;
 
+template <typename T>
+struct is_string_range : std::false_type {};
+
+template <typename Char, typename Traits, typename Allocator>
+struct is_string_range<std::basic_string<Char, Traits, Allocator>> : std::true_type {};
+
+template <typename Char, typename Traits>
+struct is_string_range<std::basic_string_view<Char, Traits>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_string_range_v = is_string_range<std::remove_cvref_t<T>>::value;
+
+template <typename T>
+struct is_optional : std::false_type {};
+
+template <typename T>
+struct is_optional<std::optional<T>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_optional_v = is_optional<std::remove_cvref_t<T>>::value;
+
+template <typename T>
+inline constexpr bool is_auto_range_v =
+    std::ranges::range<std::remove_cvref_t<T>> && !is_string_range_v<T> && !is_optional_v<T>;
+
 template <std::meta::info m>
 consteval bool is_stl_handled() {
-  if constexpr (get_namespace<m>() == ^^std) {
-    static constexpr auto m_t = std::meta::template_of(std::meta::dealias(m));
-
-    if constexpr (m_t == ^^std::vector || m_t == ^^std::array || m_t == ^^std::inplace_vector ||
-                  m_t == ^^std::deque || m_t == ^^std::forward_list || m_t == ^^std::span ||
-                  m_t == ^^std::valarray || m_t == ^^std::optional) {
-      return true;
-    }
-  }
-
-  return false;
+  return is_auto_range_v<typename[:m:]> || is_optional_v<typename[:m:]>;
 }
+
+template <typename T>
+struct is_pair : std::false_type {};
+
+template <typename First, typename Second>
+struct is_pair<std::pair<First, Second>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_pair_v = is_pair<std::remove_cvref_t<T>>::value;
 
 template <std::meta::info m>
 consteval auto get_annotations()
@@ -815,32 +839,46 @@ template <bool is_attribute, bool is_cdata, bool is_no_iter, bool is_raw, bool i
 auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> bool {
   using T = std::decay_t<decltype(value)>;
 
-  static constexpr auto m_t = std::meta::template_of(std::meta::dealias(^^T));
-
   if constexpr (!is_attribute) {
-    if constexpr (!is_no_iter &&
-                  (m_t == ^^std::vector || m_t == ^^std::array || m_t == ^^std::inplace_vector ||
-                   m_t == ^^std::deque || m_t == ^^std::forward_list || m_t == ^^std::span ||
-                   m_t == ^^std::valarray)) {
+    if constexpr (!is_no_iter && is_auto_range_v<T>) {
       static constexpr auto tags = get_tags<name>();
       static constexpr auto start = std::get<0>(tags);
       static constexpr auto start_size = std::get<1>(tags);
       static constexpr auto end = std::get<2>(tags);
-      if (value.size() > 0) {
+      auto item = std::ranges::begin(value);
+      const auto last = std::ranges::end(value);
+      if (item != last) {
         if constexpr (!is_raw) {
           result += start;
         }
 
         static constexpr auto single_name = std::define_static_string("element");
-        static constexpr auto item_m_t = std::meta::dealias(^^decltype(value[0]));
-
-        for (const auto& item : value) {
-          if constexpr (is_unpack ||
-                        (!std::formattable<typename[:item_m_t:], char> && formatter.is_empty())) {
-            to_xml(item, result, buffer, false, std::string(single_name));
+        while (item != last) {
+          using item_t = std::remove_cvref_t<decltype(*item)>;
+          if constexpr (is_pair_v<item_t>) {
+            static constexpr auto entry_tags = get_tags<single_name>();
+            result += std::get<0>(entry_tags);
+            static constexpr auto key_name = std::define_static_string("key");
+            static constexpr auto value_name = std::define_static_string("value");
+            if constexpr (is_unpack || !std::formattable<decltype((*item).first), char>) {
+              to_xml((*item).first, result, buffer, false, std::string(key_name));
+            } else {
+              add_child<key_name, false, formatter>(result, buffer, (*item).first);
+            }
+            if constexpr (is_unpack || !std::formattable<decltype((*item).second), char>) {
+              to_xml((*item).second, result, buffer, false, std::string(value_name));
+            } else {
+              add_child<value_name, false, formatter>(result, buffer, (*item).second);
+            }
+            result += std::get<2>(entry_tags);
           } else {
-            add_child<single_name, is_cdata, formatter>(result, buffer, item);
+            if constexpr (is_unpack || (!std::formattable<item_t, char> && formatter.is_empty())) {
+              to_xml(*item, result, buffer, false, std::string(single_name));
+            } else {
+              add_child<single_name, is_cdata, formatter>(result, buffer, *item);
+            }
           }
+          ++item;
         }
 
         if constexpr (!is_raw) {
@@ -856,7 +894,7 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
     }
   }
 
-  if constexpr (m_t == ^^std::optional) {
+  if constexpr (is_optional_v<T>) {
     if (!value.has_value()) {
       return true;
     }
@@ -978,24 +1016,35 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
       } else {
         if constexpr (iter_names.first != nullptr && std::meta::is_class_type(value_m_t<m>) &&
                       std::ranges::range<value_t<m>>) {
-          if constexpr (!is_raw) {
-            result.push_back('<');
-            result.append(iter_names.second);
-            result.push_back('>');
-          }
-
-          for (const auto& item : get_value<m>(value)) {
-            if constexpr (is_unpack) {
-              to_xml(item, result, buffer, false, iter_names.first);
-            } else {
-              add_child<iter_names.first, is_cdata, formatter>(result, buffer, item);
+          auto item = std::ranges::begin(get_value<m>(value));
+          const auto last = std::ranges::end(get_value<m>(value));
+          if (item == last) {
+            if constexpr (!is_raw && !is_exclude_on_empty) {
+              result.push_back('<');
+              result.append(iter_names.second);
+              result.append("/>");
             }
-          }
+          } else {
+            if constexpr (!is_raw) {
+              result.push_back('<');
+              result.append(iter_names.second);
+              result.push_back('>');
+            }
 
-          if constexpr (!is_raw) {
-            result.append("</");
-            result.append(iter_names.second);
-            result.push_back('>');
+            while (item != last) {
+              if constexpr (is_unpack) {
+                to_xml(*item, result, buffer, false, iter_names.first);
+              } else {
+                add_child<iter_names.first, is_cdata, formatter>(result, buffer, *item);
+              }
+              ++item;
+            }
+
+            if constexpr (!is_raw) {
+              result.append("</");
+              result.append(iter_names.second);
+              result.push_back('>');
+            }
           }
         } else if constexpr (is_unpack) {
           to_xml(get_value<m>(value), result, buffer, false, m_name);
