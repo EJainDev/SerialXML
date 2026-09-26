@@ -4,6 +4,17 @@ import std;
 
 import serial_xml;
 
+struct TestTemperature {
+  double celsius;
+};
+
+template <>
+struct serial_xml::conversion<TestTemperature> {
+  static TestTemperature from_xml(std::string_view text) {
+    return {serial_xml::convert_scalar<double>(text)};
+  }
+};
+
 std::string clean_to_xml(auto obj) { return serial_xml::to_xml(obj, false); }
 
 TEST(Naming, EmptyWithName) {
@@ -11,6 +22,52 @@ TEST(Naming, EmptyWithName) {
   EmptyName obj;
 
   ASSERT_EQ(clean_to_xml(obj), "<MyStruct/>");
+}
+
+TEST(Schema, MatchesSerializedMemberNamesAndShape) {
+  struct[[= serial_xml::name{"person"}]] PersonSchema {
+    [[= serial_xml::name{"full-name"}]] std::string name;
+    [[= serial_xml::attribute]] int age;
+    std::vector<int> scores;
+    std::optional<int> nickname;
+    [[= serial_xml::skip]] int internal;
+  };
+
+  const auto result = serial_xml::schema<PersonSchema>();
+  ASSERT_EQ(result.xml_name, "person");
+  ASSERT_EQ(result.fields.size(), 4);
+  EXPECT_EQ(result.fields[0].member_name, "age");
+  EXPECT_EQ(result.fields[0].xml_name, "age");
+  EXPECT_EQ(result.fields[0].kind, serial_xml::field_kind::attribute);
+  EXPECT_FALSE(result.fields[0].repeated);
+  EXPECT_EQ(result.fields[1].member_name, "name");
+  EXPECT_EQ(result.fields[1].xml_name, "full-name");
+  EXPECT_EQ(result.fields[1].kind, serial_xml::field_kind::child);
+  EXPECT_FALSE(result.fields[1].repeated);
+  EXPECT_EQ(result.fields[2].xml_name, "scores");
+  EXPECT_TRUE(result.fields[2].repeated);
+  EXPECT_EQ(result.fields[3].xml_name, "nickname");
+  EXPECT_FALSE(result.fields[3].repeated);
+}
+
+TEST(Conversion, BuiltInScalars) {
+  EXPECT_EQ(serial_xml::convert_scalar<int>("-42"), -42);
+  EXPECT_DOUBLE_EQ(serial_xml::convert_scalar<double>("1.25"), 1.25);
+  EXPECT_TRUE(serial_xml::convert_scalar<bool>("true"));
+  EXPECT_FALSE(serial_xml::convert_scalar<bool>("0"));
+  EXPECT_EQ(serial_xml::convert_scalar<char>("x"), 'x');
+  EXPECT_EQ(serial_xml::convert_scalar<std::string>("value"), "value");
+}
+
+TEST(Conversion, RejectsInvalidOrPartialInput) {
+  EXPECT_THROW(serial_xml::convert_scalar<int>("12tail"), std::invalid_argument);
+  EXPECT_THROW(serial_xml::convert_scalar<bool>("yes"), std::invalid_argument);
+  EXPECT_THROW(serial_xml::convert_scalar<char>("xy"), std::invalid_argument);
+}
+
+TEST(Conversion, UsesExplicitSpecialization) {
+  const auto value = serial_xml::convert_scalar<TestTemperature>("21.5");
+  EXPECT_DOUBLE_EQ(value.celsius, 21.5);
 }
 
 TEST(Naming, NamedAttribute) {

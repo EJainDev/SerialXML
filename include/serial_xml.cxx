@@ -1,5 +1,6 @@
 module;
 
+#include <charconv>
 #include <cstdint>
 #include <simd>  // GCC 16.1 does not have in this in the std module
 
@@ -44,6 +45,76 @@ export constexpr cdata_ cdata;
 
 struct exclude_on_empty_ {};
 export constexpr exclude_on_empty_ exclude_on_empty;
+
+// Specialize conversion<T> to define how scalar XML text becomes T. A
+// specialization provides `static T from_xml(std::string_view)`.
+export template <typename T>
+struct conversion;
+
+export enum class field_kind { attribute, child };
+
+// These policies describe the behavior intended for the XML reader. They are
+// metadata only until from_xml is implemented.
+export enum class missing_value_policy { error, default_initialize, disengage_optional };
+export enum class duplicate_value_policy { error, use_first, use_last };
+export enum class repeated_value_policy { append_in_document_order };
+
+export struct field_schema {
+  std::string_view member_name;
+  std::string_view xml_name;
+  field_kind kind;
+  bool repeated;
+};
+
+export struct type_schema {
+  std::string_view xml_name;
+  std::vector<field_schema> fields;
+};
+
+export inline constexpr auto default_missing_required_value_policy = missing_value_policy::error;
+export inline constexpr auto default_missing_optional_value_policy =
+    missing_value_policy::disengage_optional;
+export inline constexpr auto default_duplicate_value_policy = duplicate_value_policy::error;
+export inline constexpr auto default_repeated_value_policy =
+    repeated_value_policy::append_in_document_order;
+
+// Convert one already-decoded XML text value to a scalar C++ value. XML entity
+// decoding and whitespace normalization are the caller's responsibility.
+export template <typename T>
+T convert_scalar(std::string_view text) {
+  using value_type = std::remove_cv_t<T>;
+
+  if constexpr (requires { conversion<value_type>::from_xml(text); }) {
+    return conversion<value_type>::from_xml(text);
+  } else if constexpr (std::same_as<value_type, std::string>) {
+    return std::string(text);
+  } else if constexpr (std::same_as<value_type, bool>) {
+    if (text == "true" || text == "1") return true;
+    if (text == "false" || text == "0") return false;
+    throw std::invalid_argument("invalid boolean XML scalar");
+  } else if constexpr (std::same_as<value_type, char>) {
+    if (text.size() != 1) throw std::invalid_argument("XML char scalar must contain one byte");
+    return text.front();
+  } else if constexpr (std::is_integral_v<value_type>) {
+    value_type result{};
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), result);
+    if (error != std::errc{} || end != text.data() + text.size()) {
+      throw std::invalid_argument("invalid integral XML scalar");
+    }
+    return result;
+  } else if constexpr (std::is_floating_point_v<value_type>) {
+    value_type result{};
+    const auto [end, error] =
+        std::from_chars(text.data(), text.data() + text.size(), result, std::chars_format::general);
+    if (error != std::errc{} || end != text.data() + text.size()) {
+      throw std::invalid_argument("invalid floating-point XML scalar");
+    }
+    return result;
+  } else {
+    static_assert(std::same_as<value_type, void>,
+                  "No serial_xml scalar conversion exists; specialize serial_xml::conversion<T>");
+  }
+}
 
 constexpr bool is_alpha(const char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
@@ -208,6 +279,14 @@ consteval bool is_stl_handled() {
     }
   }
 
+  return false;
+}
+
+template <std::meta::info m>
+consteval bool is_optional() {
+  if constexpr (get_namespace<m>() == ^^std) {
+    return std::meta::template_of(std::meta::dealias(m)) == ^^std::optional;
+  }
   return false;
 }
 
@@ -433,6 +512,63 @@ consteval auto get_members() {
 
   return std::make_pair(std::define_static_array(attribute_annotations),
                         std::define_static_array(child_annotations));
+}
+
+template <typename T>
+  requires(std::is_class_v<T>)
+type_schema make_schema() {
+  static constexpr auto type_info = ^^T;
+  std::string_view root_name;
+  static constexpr auto type_annotations =
+      std::define_static_array(std::meta::annotations_of(type_info));
+
+  template for (constexpr auto annotation : type_annotations) {
+    if constexpr (std::meta::has_template_arguments(std::meta::type_of(annotation)) &&
+                  std::meta::template_of(std::meta::type_of(annotation)) == ^^::serial_xml::name) {
+      static constexpr auto configured_name =
+          std::meta::extract<typename[:std::meta::type_of(annotation):]>(annotation);
+      root_name = configured_name.value;
+    }
+  }
+
+  if (root_name.empty()) {
+    if constexpr (std::meta::has_identifier(type_info)) {
+      static constexpr auto default_name = std::meta::identifier_of(type_info);
+      root_name = default_name;
+    }
+  }
+
+  type_schema result{root_name, {}};
+  static constexpr auto members = get_members<type_info>();
+
+  template for (constexpr auto member : members.first) {
+    static constexpr auto reflected_member = member.first;
+    static constexpr auto member_name = std::meta::identifier_of(reflected_member);
+    static constexpr auto xml_name = structural_tuple::get<0>(member.second);
+    result.fields.push_back(field_schema{member_name, xml_name, field_kind::attribute, false});
+  }
+
+  template for (constexpr auto member : members.second) {
+    static constexpr auto reflected_member = member.first;
+    static constexpr auto member_name = std::meta::identifier_of(reflected_member);
+    static constexpr auto iter_names = structural_tuple::get<4>(member.second);
+    static constexpr auto no_iter = structural_tuple::get<1>(member.second);
+    static constexpr auto automatically_repeated = is_stl_handled<value_m_t<reflected_member>>() &&
+                                                   std::ranges::range<value_t<reflected_member>> &&
+                                                   !is_optional<value_m_t<reflected_member>>() &&
+                                                   !no_iter;
+    static constexpr auto repeated = iter_names.first != nullptr || automatically_repeated;
+    static constexpr auto xml_name = structural_tuple::get<5>(member.second);
+    result.fields.push_back(field_schema{member_name, xml_name, field_kind::child, repeated});
+  }
+
+  return result;
+}
+
+export template <typename T>
+  requires(std::is_class_v<T>)
+type_schema schema() {
+  return make_schema<T>();
 }
 
 template <auto name>
