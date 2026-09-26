@@ -161,6 +161,46 @@ As you can see, there are some parameters for configuration"
 - `first` -- a bool indicating whether to insert the XML header defining the file as XML. `true` means yes
 - `fixed_name` -- a custom name to specify for the instance being serialized. Overrides `name` annotation.
 
+### Schema and scalar conversion rules
+
+`serial_xml::schema<T>()` exposes the field-to-XML mapping inferred from the same reflection and
+annotations used by `to_xml`. Each descriptor reports the C++ member name, XML name, and whether
+the member is an attribute or child element. A member-level `name` annotation overrides the C++
+identifier; otherwise the identifier is used. `skip` members are absent from the schema. The type's
+`name` annotation controls the root name, falling back to the type name. Child fields represented
+by an automatically iterated container or an `iter` annotation are marked `repeated`.
+
+The schema API prepares for deserialization; it does not parse XML. The intended reader rules are:
+missing required fields are errors, missing `std::optional` fields remain disengaged, duplicate
+scalar attributes or child elements are errors, and repeated child elements append in document
+order. A required field is one that is neither optional nor otherwise defaulted by a future reader
+configuration. These policy constants are exposed as `default_missing_required_value_policy`,
+`default_missing_optional_value_policy`, `default_duplicate_value_policy`, and
+`default_repeated_value_policy`.
+
+`serial_xml::convert_scalar<T>(text)` converts already-decoded scalar text. It supports strings,
+single-byte `char`, booleans (`true`, `false`, `1`, or `0`), integral values, and floating-point
+values. Numeric conversions must consume the complete string and do not trim whitespace. Invalid
+or out-of-range values throw `std::invalid_argument`. Entity decoding and any XML whitespace rules
+belong to the XML reader.
+
+For another scalar type, specialize `serial_xml::conversion<T>` and provide a static
+`T from_xml(std::string_view)` function. For example:
+
+```cpp
+struct Temperature { double celsius; };
+
+template <>
+struct serial_xml::conversion<Temperature> {
+  static Temperature from_xml(std::string_view text) {
+    return {serial_xml::convert_scalar<double>(text)};
+  }
+};
+```
+
+This conversion customization is separate from `format` annotations, which only control C++ to
+XML text formatting.
+
 ### The `prettify` function
 
 A simple function to prettify (add indentation and newlines) the generated XML output. The only parameter is the output and it returns a new string with the output.
