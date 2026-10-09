@@ -1282,7 +1282,7 @@ T range_item(std::string_view text) {
 
 template <typename T, std::size_t... I>
 T make_tuple(const std::vector<std::string_view>& values, std::index_sequence<I...>) {
-  return T{range_item<std::tuple_element_t<I, T>>(values[I])...};
+  return T{range_item<std::remove_cvref_t<std::tuple_element_t<I, T>>>(values[I])...};
 }
 }  // namespace detail
 
@@ -2129,6 +2129,13 @@ consteval bool explicitly_selected_setter() {
   return false;
 }
 
+template <std::meta::info Setter, typename T, typename V>
+void invoke_setter(T& result, V& value) {
+  constexpr auto parameter = std::meta::type_of(std::meta::parameters_of(Setter)[0]);
+  using P = [:parameter:];
+  result.[:Setter:](std::forward<P>(value));
+}
+
 template <typename T, typename Schema>
 void read_object(const xml_node& node, T& result) {
   using S = std::conditional_t<std::is_void_v<Schema>, T, Schema>;
@@ -2145,14 +2152,14 @@ void read_object(const xml_node& node, T& result) {
         [[maybe_unused]] constexpr auto checked = input_type<m>();
         using V = value_t<source>;
         if (auto value = read_member<m, source, V>(node, cdata_index, raw_scalar_seen))
-          result.[:source:](std::move(*value));
+          invoke_setter<source>(result, *value);
       } else if constexpr (std::meta::is_function(source)) {
         constexpr auto setter = matching_setter<source, T>();
         if constexpr (setter != std::meta::info{}) {
           if constexpr (!explicitly_selected_setter<setter, S>()) {
             using V = value_t<source>;
             if (auto value = read_member<m, source, V>(node, cdata_index, raw_scalar_seen))
-              result.[:setter:](std::move(*value));
+              invoke_setter<setter>(result, *value);
           }
         }
         // Read-only getters are serialization-only and intentionally ignored.

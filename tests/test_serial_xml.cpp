@@ -923,6 +923,19 @@ TEST(FromXml, OwningRangesAndIteration) {
                serial_xml::deserialization_error);
 }
 
+TEST(FromXml, IteratedMapsWithConstKeys) {
+  struct MapInputRecord {
+    [[= serial_xml::iter{"entry"}]] std::map<int, int> numbers;
+    [[= serial_xml::iter{"entry"}]] std::map<std::string, int> strings;
+  };
+  MapInputRecord original{{{1, 2}, {3, 4}}, {{"a:b", 5}, {"hello world", 6}}};
+  auto xml = serial_xml::to_xml(original, false);
+  auto result = serial_xml::from_xml<MapInputRecord>(xml);
+  EXPECT_EQ(result.numbers, original.numbers);
+  EXPECT_EQ(result.strings, original.strings);
+  EXPECT_EQ(serial_xml::to_xml(result, false), xml);
+}
+
 TEST(FromXml, RawAndCdata) {
   struct RawTextInput {
     int number;
@@ -986,6 +999,56 @@ TEST(FromXml, EncapsulationWithAutomaticSetterMatching) {
   EXPECT_EQ(result.get_title(), "test");
   EXPECT_EQ(result.getCount(), 9);
   EXPECT_EQ(result.read_only(), 77);
+}
+
+TEST(FromXml, AutomaticSettersPreserveParameterCategories) {
+  class ReferenceSetterInput {
+   public:
+    int number() const { return number_; }
+    void set_number(int& value) { number_ = value; }
+    std::string title() const { return title_; }
+    void set_title(std::string&& value) { title_ = std::move(value); }
+    std::string label() const { return label_; }
+    void set_label(const std::string& value) { label_ = value; }
+
+   private:
+    int number_ = 0;
+    std::string title_;
+    std::string label_;
+  };
+  auto result = serial_xml::from_xml<ReferenceSetterInput>(
+      "<ReferenceSetterInput><number>42</number><title>moved</title><label>copied</label>"
+      "</ReferenceSetterInput>");
+  EXPECT_EQ(result.number(), 42);
+  EXPECT_EQ(result.title(), "moved");
+  EXPECT_EQ(result.label(), "copied");
+}
+
+TEST(FromXml, AnnotatedAndMockSettersPreserveParameterCategories) {
+  class AnnotatedReferenceInput {
+   public:
+    [[= serial_xml::setter]] void set_number(int& value) { number_ = value; }
+    [[= serial_xml::setter]] void set_title(std::string&& value) { title_ = std::move(value); }
+    [[= serial_xml::skip]] int number() const { return number_; }
+    [[= serial_xml::skip]] std::string title() const { return title_; }
+
+   private:
+    int number_ = 0;
+    std::string title_;
+  };
+  auto result = serial_xml::from_xml<AnnotatedReferenceInput>(
+      "<AnnotatedReferenceInput><number>42</number><title>moved</title>"
+      "</AnnotatedReferenceInput>");
+  EXPECT_EQ(result.number(), 42);
+  EXPECT_EQ(result.title(), "moved");
+  struct[[= serial_xml::name{"record"}]] ReferenceSetterSchema {
+    [[= serial_xml::setter]] void set_number(int);
+    [[= serial_xml::setter]] void set_title(std::string);
+  };
+  auto mock_result = serial_xml::from_xml<AnnotatedReferenceInput, ReferenceSetterSchema>(
+      "<record><number>7</number><title>mock</title></record>");
+  EXPECT_EQ(mock_result.number(), 7);
+  EXPECT_EQ(mock_result.title(), "mock");
 }
 
 class IndependentSetters {
