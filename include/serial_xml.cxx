@@ -211,7 +211,7 @@ consteval bool is_stl_handled() {
   return false;
 }
 
-template <std::meta::info m>
+template <std::meta::info m, std::meta::info source = m>
 consteval auto get_annotations()
     -> structural_tuple::tuple<bool, bool, bool, bool, bool, bool,
                                std::pair<char const*, char const*>, char const*, bool> {
@@ -219,11 +219,11 @@ consteval auto get_annotations()
 
   bool is_attribute = false;
   bool is_cdata = false;
-  bool is_no_iter = !is_stl_handled<value_m_t<m>>();
+  bool is_no_iter = !is_stl_handled<value_m_t<source>>();
   bool is_raw = false;
   bool is_skip = false;
-  bool is_unpack = std::meta::is_class_type(value_m_t<m>) && !std::formattable<value_t<m>, char> &&
-                   !is_stl_handled<value_m_t<m>>();
+  bool is_unpack = std::meta::is_class_type(value_m_t<source>) &&
+                   !std::formattable<value_t<source>, char> && !is_stl_handled<value_m_t<source>>();
 
   bool has_custom_format_function = false;
   std::optional<std::pair<std::string, std::string>> iter_names;
@@ -257,7 +257,7 @@ consteval auto get_annotations()
           has_custom_format_function = true;
         }
       } else if constexpr (std::meta::template_of(a_t) == ^^::serial_xml::iter) {
-        if constexpr (!std::ranges::range<value_t<m>>) {
+        if constexpr (!std::ranges::range<value_t<source>>) {
           throw std::logic_error(
               "serial_xml::iter annotation can only be applied to range types. Member name: " +
               std::string(std::meta::identifier_of(m)));
@@ -295,9 +295,9 @@ consteval auto get_annotations()
     }
   }
 
-  if constexpr (std::ranges::range<value_t<m>>) {
+  if constexpr (std::ranges::range<value_t<source>>) {
     if (iter_names.has_value()) {
-      using m_t = std::ranges::range_value_t<value_t<m>>;
+      using m_t = std::ranges::range_value_t<value_t<source>>;
       is_unpack = std::is_class_v<m_t> && !std::formattable<m_t, char>;
     }
   }
@@ -329,35 +329,120 @@ consteval auto get_annotations()
                                  is_exclude_on_empty};
 }
 
-template <std::meta::info m>
-consteval auto is_invalid_function() {
-  if constexpr (std::meta::is_function(m)) {
-    if constexpr (!(std::meta::is_constructor(m) || std::meta::is_destructor(m))) {
-      if constexpr (std::meta::return_type_of(m) == ^^void) {
-        return true;
-      }
-    } else {
+consteval bool is_skipped_member(std::meta::info member) {
+  for (auto annotation : std::meta::annotations_of(member)) {
+    if (std::meta::type_of(annotation) == ^^decltype(::serial_xml::skip)) {
       return true;
     }
-
-    if constexpr (!std::meta::is_const(m)) {
-      return true;
-    }
-
-    static constexpr auto params = std::define_static_array(std::meta::parameters_of(m));
-    template for (constexpr auto p : params) {
-      if constexpr (!std::meta::has_default_argument(p)) {
-        return true;
-      }
-    }
-  } else if constexpr (std::meta::is_function_template(m)) {
-    return true;
   }
-
   return false;
 }
 
-template <std::meta::info container>
+// A persistent, compile-time hash table. Build once per concrete target type, then
+// resolve each mock member without expanding a target-member template loop.
+struct member_map_entry {
+  char const* identifier = nullptr;
+  std::meta::info member{};
+  bool ambiguous = false;
+};
+
+consteval std::size_t identifier_hash(std::string_view identifier) {
+  std::size_t hash = 14695981039346656037ULL;
+  for (unsigned char c : identifier) {
+    hash = (hash ^ c) * 1099511628211ULL;
+  }
+  return hash;
+}
+
+consteval bool is_serializable_member(std::meta::info member) {
+  if (std::meta::is_nonstatic_data_member(member) || std::meta::is_variable(member)) {
+    return true;
+  }
+  if (!std::meta::is_function(member) || std::meta::is_constructor(member) ||
+      std::meta::is_destructor(member) || std::meta::is_static_member(member) ||
+      !std::meta::is_const(member) || std::meta::is_rvalue_reference_qualified(member) ||
+      std::meta::return_type_of(member) == ^^void) {
+    return false;
+  }
+  for (auto parameter : std::meta::parameters_of(member)) {
+    if (!std::meta::has_default_argument(parameter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename T>
+consteval auto make_string_to_field_map() {
+  // Includes functions as well as fields. Inaccessible members and members that
+  // cannot be read from a const object do not participate in serialization.
+  auto members = std::meta::members_of(^^T, std::meta::access_context::current());
+  std::size_t count = 0;
+  for (auto member : members) {
+    if (is_serializable_member(member)) {
+      ++count;
+    }
+  }
+  std::size_t capacity = 1;
+  while (capacity < count * 2) {
+    capacity *= 2;
+  }
+  std::vector<member_map_entry> entries(capacity);
+  for (auto member : members) {
+    if (!is_serializable_member(member)) {
+      continue;
+    }
+    auto identifier = std::meta::identifier_of(member);
+    auto index = identifier_hash(identifier) & (capacity - 1);
+    while (entries[index].identifier != nullptr &&
+           std::string_view(entries[index].identifier) != identifier) {
+      index = (index + 1) & (capacity - 1);
+    }
+    if (entries[index].identifier == nullptr) {
+      entries[index] = {std::define_static_string(identifier), member, false};
+    } else {
+      entries[index].ambiguous = true;
+    }
+  }
+  return std::define_static_array(entries);
+}
+
+template <typename T>
+constexpr auto string_to_field_map = make_string_to_field_map<T>();
+
+template <typename T>
+consteval member_map_entry find_member(std::string_view identifier) {
+  constexpr auto entries = string_to_field_map<T>;
+  auto index = identifier_hash(identifier) & (entries.size() - 1);
+  while (entries[index].identifier != nullptr) {
+    if (std::string_view(entries[index].identifier) == identifier) {
+      return entries[index];
+    }
+    index = (index + 1) & (entries.size() - 1);
+  }
+  return {};
+}
+
+template <std::meta::info member, typename T>
+consteval std::meta::info resolve_member() {
+  if constexpr (std::meta::parent_of(member) == std::meta::dealias(^^T)) {
+    return member;
+  } else {
+    constexpr auto identifier = std::meta::identifier_of(member);
+    constexpr auto entry = find_member<T>(identifier);
+    static_assert(
+        entry.identifier != nullptr,
+        "No accessible field or const getter for mock member: " + std::string(identifier));
+    static_assert(!entry.ambiguous, "Ambiguous mock member: " + std::string(identifier));
+    if constexpr (entry.identifier != nullptr) {
+      static_assert(std::meta::is_function(member) == std::meta::is_function(entry.member),
+                    "Mock member must match a field or a const getter: " + std::string(identifier));
+    }
+    return entry.member;
+  }
+}
+
+template <std::meta::info container, typename T>
 consteval auto get_members() {
   static constexpr auto members = std::define_static_array(
       std::meta::members_of(container, std::meta::access_context::current()));
@@ -371,10 +456,10 @@ consteval auto get_members() {
       attribute_annotations;
 
   template for (constexpr auto m : members) {
-    static constexpr auto invalid_function = is_invalid_function<m>();
-
-    if constexpr (!invalid_function) {
-      static constexpr auto m_annotations = get_annotations<m>();
+    // A skipped placeholder need not exist on the target.
+    if constexpr (is_serializable_member(m) && !is_skipped_member(m)) {
+      static constexpr auto source = resolve_member<m, T>();
+      static constexpr auto m_annotations = get_annotations<m, source>();
 
       // Invalid attribute combinations
       static_assert(
@@ -805,7 +890,7 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
   }
 }
 
-template <typename T>
+template <typename Schema = void, typename T>
   requires(std::is_class_v<T>)
 void to_xml(const T& value, std::string& result, std::string& buffer, bool first,
             const std::string& fixed_name = "");
@@ -877,7 +962,7 @@ auto handle_stl(std::string& result, std::string& buffer, const auto& value) -> 
   return false;
 }
 
-template <typename T>
+template <typename Schema, typename T>
   requires(std::is_class_v<T>)
 void to_xml(const T& value, std::string& result, std::string& buffer, bool first,
             const std::string& fixed_name) {
@@ -885,7 +970,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     result += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
   }
 
-  static constexpr auto M = ^^T;
+  using schema_type = std::conditional_t<std::is_void_v<Schema>, T, Schema>;
+  static constexpr auto M = std::meta::dealias(^^schema_type);
 
   static constexpr auto annotations = std::define_static_array(std::meta::annotations_of(M));
 
@@ -893,15 +979,21 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     buffer = fixed_name;
   } else {
     template for (constexpr auto a : annotations) {
-      if constexpr (std::meta::template_of(std::meta::type_of(a)) == ^^::serial_xml::name) {
+      if constexpr (std::meta::has_template_arguments(std::meta::type_of(a)) &&
+                    std::meta::template_of(std::meta::type_of(a)) == ^^::serial_xml::name) {
         static constexpr auto temp_name = std::meta::extract<typename[:std::meta::type_of(a):]>(a);
         buffer = std::string(temp_name.value);
       }
     }
     if (buffer.empty()) {
-      if constexpr (std::meta::has_identifier(M)) {
-        static constexpr auto temp_name = std::meta::identifier_of(M);
+      if constexpr (std::meta::has_identifier(std::meta::dealias(^^T))) {
+        static constexpr auto temp_name = std::meta::identifier_of(std::meta::dealias(^^T));
         buffer = std::string(temp_name);
+      } else if constexpr (std::meta::has_template_arguments(std::meta::dealias(^^T))) {
+        static constexpr auto type_template = std::meta::template_of(std::meta::dealias(^^T));
+        if constexpr (std::meta::has_identifier(type_template)) {
+          buffer = std::string(std::meta::identifier_of(type_template));
+        }
       }
     }
   }
@@ -909,14 +1001,14 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   std::string name{buffer};
   std::format_to(std::back_inserter(result), "<{}", name);
 
-  static constexpr auto members = get_members<M>();
+  static constexpr auto members = get_members<M, T>();
   static constexpr auto attribute_annotations = members.first;
   static constexpr auto child_annotations = members.second;
 
   template for (constexpr auto m_a : attribute_annotations) {
-    static constexpr auto is_std = is_stl_handled<std::meta::type_of(m_a.first)>();
-
     static constexpr auto m = m_a.first;
+    static constexpr auto source = resolve_member<m, T>();
+    static constexpr auto is_std = is_stl_handled<value_m_t<source>>();
     static constexpr auto m_annotations = m_a.second;
 
     static constexpr auto formatter = get_format<m>();
@@ -932,10 +1024,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
         std::string("Invalid XML name: '") + std::string(view_name) + "'");
 
     if constexpr (is_std) {
-      handle_stl<true, false, true, false, false, false, m_name, formatter>(result, buffer,
-                                                                            get_value<m>(value));
+      handle_stl<true, false, true, false, false, false, m_name, formatter>(
+          result, buffer, get_value<source>(value));
     } else {
-      add_attribute<m_name, formatter>(result, buffer, get_value<m>(value));
+      add_attribute<m_name, formatter>(result, buffer, get_value<source>(value));
     }
   }
 
@@ -945,9 +1037,9 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     result += '>';
 
     template for (constexpr auto m_a : child_annotations) {
-      static constexpr auto is_std = is_stl_handled<std::meta::type_of(m_a.first)>();
-
       static constexpr auto m = m_a.first;
+      static constexpr auto source = resolve_member<m, T>();
+      static constexpr auto is_std = is_stl_handled<value_m_t<source>>();
       static constexpr auto m_annotations = m_a.second;
 
       static constexpr auto is_cdata = structural_tuple::get<0>(m_annotations);
@@ -974,17 +1066,17 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
       if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
         handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
-                   formatter>(result, buffer, get_value<m>(value));
+                   formatter>(result, buffer, get_value<source>(value));
       } else {
-        if constexpr (iter_names.first != nullptr && std::meta::is_class_type(value_m_t<m>) &&
-                      std::ranges::range<value_t<m>>) {
+        if constexpr (iter_names.first != nullptr && std::meta::is_class_type(value_m_t<source>) &&
+                      std::ranges::range<value_t<source>>) {
           if constexpr (!is_raw) {
             result.push_back('<');
             result.append(iter_names.second);
             result.push_back('>');
           }
 
-          for (const auto& item : get_value<m>(value)) {
+          for (const auto& item : get_value<source>(value)) {
             if constexpr (is_unpack) {
               to_xml(item, result, buffer, false, iter_names.first);
             } else {
@@ -998,10 +1090,10 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
             result.push_back('>');
           }
         } else if constexpr (is_unpack) {
-          to_xml(get_value<m>(value), result, buffer, false, m_name);
+          to_xml(get_value<source>(value), result, buffer, false, m_name);
         } else {
           if constexpr (is_raw) {
-            buffer = format_value<formatter>(get_value<m>(value));
+            buffer = format_value<formatter>(get_value<source>(value));
 
             auto padded_size = get_escape_bitmask(buffer);
 
@@ -1015,7 +1107,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
                   return original_size + copy_with_escapes(buf, buffer, padded_size);
                 });
           } else {
-            add_child<m_name, is_cdata, formatter>(result, buffer, get_value<m>(value));
+            add_child<m_name, is_cdata, formatter>(result, buffer, get_value<source>(value));
           }
         }
       }
@@ -1033,8 +1125,8 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   }
 }
 
-export template <typename T>
-  requires(std::is_class_v<T>)
+export template <typename Schema = void, typename T>
+  requires(std::is_class_v<T> && (std::is_void_v<Schema> || std::is_class_v<Schema>))
 auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "") -> std::string {
   std::string result;
   std::string buffer;
@@ -1042,7 +1134,7 @@ auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "
   result.reserve(4096);
   buffer.reserve(256);
 
-  to_xml(value, result, buffer, first, fixed_name);
+  to_xml<Schema>(value, result, buffer, first, fixed_name);
 
   escape_flags.clear();
   escape_flags.shrink_to_fit();

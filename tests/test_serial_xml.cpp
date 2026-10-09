@@ -646,3 +646,114 @@ TEST(Functions, IgnoreTemplated) {
 
   ASSERT_EQ(clean_to_xml(obj), "<IgnoreTemplatedFunction/>");
 }
+
+class mock_vector {
+ public:
+  [[= serial_xml::attribute]] std::size_t size() const { return 0; }
+};
+
+TEST(Mocking, VectorGetterUsesActualObject) {
+  const std::vector<int> values{10, 20, 30};
+  ASSERT_EQ(serial_xml::to_xml<mock_vector>(values, false), "<vector size=\"3\"/>");
+  ASSERT_EQ(serial_xml::to_xml<mock_vector>(std::vector<std::string>{}, false),
+            "<vector size=\"0\"/>");
+  ASSERT_EQ(serial_xml::to_xml<mock_vector>(values),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><vector size=\"3\"/>");
+}
+
+TEST(Mocking, FieldsUseMockAnnotationsAndOrder) {
+  struct MockFieldsTarget {
+    int a;
+    int i;
+    int ignored;
+  };
+  struct MockFields {
+    [[ = serial_xml::attribute, = serial_xml::name{"second"} ]] int i;
+    [[= serial_xml::name{"first"}]] int a;
+    [[= serial_xml::skip]] int nonexistent;
+  };
+  // a and i collide in the eight-slot identifier table.
+  ASSERT_EQ(serial_xml::to_xml<MockFields>(MockFieldsTarget{4, 7, 99}, false),
+            "<MockFieldsTarget "
+            "second=\"7\"><first>4</first></MockFieldsTarget>");
+}
+
+TEST(Mocking, GetterSelectsConstCallableOverload) {
+  struct MockOverloadsTarget {
+    int amount() { return 100; }
+    int amount() const { return 8; }
+    int amount(int) const { return 200; }
+  };
+  struct MockOverloads {
+    [[= serial_xml::attribute]] int amount() const;
+  };
+  ASSERT_EQ(serial_xml::to_xml<MockOverloads>(MockOverloadsTarget{}, false),
+            "<MockOverloadsTarget amount=\"8\"/>");
+}
+
+TEST(Mocking, TargetReturnTypeControlsSerialization) {
+  struct MockRangeTarget {
+    std::vector<int> values() const { return {2, 3}; }
+  };
+  struct MockRange {
+    // The placeholder body and type never provide the serialized value.
+    int values() const;
+  };
+  ASSERT_EQ(serial_xml::to_xml<MockRange>(MockRangeTarget{}, false),
+            "<MockRangeTarget><values><element>2</element><element>3</"
+            "element></values></MockRangeTarget>");
+}
+
+TEST(Mocking, FormatsAndNamesComeFromMock) {
+  struct MockFormatTarget {
+    [[= serial_xml::skip]] int value;
+  };
+  struct[[= serial_xml::name{"record"}]] MockFormat {
+    MockFormat() = delete;
+    [[ = serial_xml::format{"04"}, = serial_xml::name{"number"} ]] int value;
+  };
+  ASSERT_EQ(serial_xml::to_xml<MockFormat>(MockFormatTarget{12}, false),
+            "<record><number>0012</number></record>");
+  ASSERT_EQ(serial_xml::to_xml<MockFormat>(MockFormatTarget{12}, false, "override"),
+            "<override><number>0012</number></override>");
+}
+
+TEST(Mocking, NestedValuesAndExplicitIteration) {
+  struct Item {
+    int value;
+  };
+  struct MockNestedTarget {
+    Item child;
+    std::vector<Item> items;
+  };
+  struct MockNested {
+    int child;
+    [[= serial_xml::iter{"item", "list"}]] int items;
+  };
+  ASSERT_EQ(serial_xml::to_xml<MockNested>(MockNestedTarget{{5}, {{6}, {7}}}, false),
+            "<MockNestedTarget><child><value>5</value></"
+            "child><list><item><value>6</value></item>"
+            "<item><value>7</value></item></list></MockNestedTarget>");
+}
+
+TEST(Mocking, EmptySchemaDoesNotSerializeTargetMembers) {
+  struct MockEmptyTarget {
+    int value;
+  };
+  struct Empty {};
+  ASSERT_EQ(serial_xml::to_xml<Empty>(MockEmptyTarget{5}, false), "<MockEmptyTarget/>");
+  ASSERT_EQ(serial_xml::to_xml<MockEmptyTarget>(MockEmptyTarget{5}, false),
+            "<MockEmptyTarget><value>5</value></"
+            "MockEmptyTarget>");
+}
+
+TEST(Mocking, GetterWithDefaultArgument) {
+  struct MockDefaultTarget {
+    int value(int offset = 2) const { return 5 + offset; }
+  };
+  struct MockDefault {
+    int value() const;
+  };
+  ASSERT_EQ(serial_xml::to_xml<MockDefault>(MockDefaultTarget{}, false),
+            "<MockDefaultTarget><value>7</value></MockDefaultTarget>");
+}

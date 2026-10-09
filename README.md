@@ -21,6 +21,7 @@ SerialXML is a C++26 reflection based serialization library for XML. Behaviour i
 * [Annotations](#annotations)
   * [Common Confusion Points](#common-confusion-points)
   * [Configuring `to_xml`](#configuring-to_xml)
+  * [Mocking classes](#mocking-classes)
   * [The `prettify` function](#the-prettify-function)
 * [Examples](#examples)
 * [Contributing](#contributing)
@@ -151,8 +152,8 @@ This is the complete list of annotations:
 The function signature of `to_xml` is the following:
 
 ```
-template <typename T>
-  requires(std::is_class_v<T>)
+template <typename Mock = void, typename T>
+  requires(std::is_class_v<T> && (std::is_void_v<Mock> || std::is_class_v<Mock>))
 auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "") -> std::string;
 ```
 
@@ -160,6 +161,39 @@ As you can see, there are some parameters for configuration"
 - `value` -- the instance of the class to serialize
 - `first` -- a bool indicating whether to insert the XML header defining the file as XML. `true` means yes
 - `fixed_name` -- a custom name to specify for the instance being serialized. Overrides `name` annotation.
+
+### Mocking classes
+
+Use `to_xml<Mock>(value)` to serialize a class you cannot annotate directly:
+
+```cpp
+class mock_vector {
+ public:
+  [[= serial_xml::attribute]] std::size_t size() const;
+};
+
+const std::vector<int> values{1, 2, 3};
+std::println("{}", serial_xml::to_xml<mock_vector>(values, false));
+// <vector size="3"/>
+```
+
+The mock lists the fields and const getters to serialize, in output order, and supplies their XML annotations. Member identifiers must match accessible members of the actual class. Field placeholders match fields; getter placeholders match non-static const getters callable without arguments (including getters with default arguments). Mock methods need no implementation, and the mock is never constructed. Serialization reads values from the actual object, using its member types for formatting, iteration, and nested serialization. Target member annotations are replaced by the mock's annotations; nested objects use their own annotations normally.
+
+The root name defaults to the actual type's identifier. A `name` annotation on the
+mock overrides it, and `fixed_name` overrides both. Members marked `skip` need not
+exist on the target. Missing members, incompatible field/getter kinds, and
+ambiguous callable const overloads produce compile-time errors. Mapping covers
+direct accessible members; inherited members are not included.
+
+The identifier map is built once per concrete target type, such as
+`std::vector<int>`, during constant evaluation. It uses an open-addressed hash
+table with at most 50% occupancy and expected O(1) member lookup after hashing the
+identifier. Hash collisions are resolved by probing and comparing identifiers;
+worst-case lookup is O(N). This avoids a target-member template expansion or a
+linear scan of all target members for every mock member. No map or name lookup
+runs during serialization. Calling `to_xml(value)` still serializes normally.
+
+See [the mocking example](examples/mocking.cpp).
 
 ### The `prettify` function
 
