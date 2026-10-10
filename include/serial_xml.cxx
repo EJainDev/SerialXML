@@ -10,11 +10,85 @@ import std;
 import structural_tuple;
 
 namespace serial_xml {
+namespace detail {
+constexpr bool xml_character(std::uint32_t c) {
+  return c == 9 || c == 10 || c == 13 || (c >= 0x20 && c <= 0xD7FF) ||
+         (c >= 0xE000 && c <= 0xFFFD) || (c >= 0x10000 && c <= 0x10FFFF);
+}
+
+constexpr bool next_codepoint(std::string_view input, std::size_t& i, std::uint32_t& c) {
+  auto first = static_cast<unsigned char>(input[i++]);
+  c = first;
+  if (first < 0x80) return xml_character(c);
+  unsigned length = first >= 0xC2 && first <= 0xDF   ? 2
+                    : first >= 0xE0 && first <= 0xEF ? 3
+                    : first >= 0xF0 && first <= 0xF4 ? 4
+                                                     : 0;
+  if (!length || input.size() - i < length - 1) return false;
+  c = first & (0x7F >> length);
+  for (unsigned j = 1; j < length; ++j) {
+    auto next = static_cast<unsigned char>(input[i++]);
+    if ((next & 0xC0) != 0x80) return false;
+    c = (c << 6) | (next & 0x3F);
+  }
+  return !(length == 2 && c < 0x80) && !(length == 3 && c < 0x800) &&
+         !(length == 4 && c < 0x10000) && xml_character(c);
+}
+
+constexpr bool xml_name(std::string_view name) {
+  if (name.empty()) return false;
+  for (std::size_t i = 0; i < name.size();) {
+    bool first = i == 0;
+    std::uint32_t c;
+    if (!next_codepoint(name, i, c)) return false;
+    bool start = c == ':' || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                 (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) ||
+                 (c >= 0xF8 && c <= 0x2FF) || (c >= 0x370 && c <= 0x37D) ||
+                 (c >= 0x37F && c <= 0x1FFF) || (c >= 0x200C && c <= 0x200D) ||
+                 (c >= 0x2070 && c <= 0x218F) || (c >= 0x2C00 && c <= 0x2FEF) ||
+                 (c >= 0x3001 && c <= 0xD7FF) || (c >= 0xF900 && c <= 0xFDCF) ||
+                 (c >= 0xFDF0 && c <= 0xFFFD) || (c >= 0x10000 && c <= 0xEFFFF);
+    if (!start && (first || !(c == '-' || c == '.' || (c >= '0' && c <= '9') || c == 0xB7 ||
+                              (c >= 0x300 && c <= 0x36F) || (c >= 0x203F && c <= 0x2040))))
+      return false;
+  }
+  return true;
+}
+
+template <typename F>
+void validate_xml_text(std::string_view input, F on_whitespace) {
+  for (std::size_t i = 0; i < input.size();) {
+    // Ordinary ASCII needs neither Unicode decoding nor whitespace handling.
+    if (input.size() - i >= sizeof(std::uint64_t)) {
+      std::uint64_t bytes;
+      std::memcpy(&bytes, input.data() + i, sizeof(bytes));
+      constexpr auto high_bits = 0x8080808080808080ULL;
+      constexpr auto spaces = 0x2020202020202020ULL;
+      if (!(bytes & high_bits) && !((bytes - spaces) & ~bytes & high_bits)) {
+        i += sizeof(bytes);
+        continue;
+      }
+    }
+    const auto index = i;
+    std::uint32_t c;
+    if (!next_codepoint(input, i, c))
+      throw std::invalid_argument("Invalid XML character or UTF-8 in serialized value");
+    if (c == 9 || c == 10 || c == 13) on_whitespace(index, c);
+  }
+}
+
+void validate_xml_text(std::string_view input) {
+  validate_xml_text(input, [](std::size_t, std::uint32_t) {});
+}
+}  // namespace detail
+
 export template <std::size_t N>
 struct name {
   char value[N];
 
   constexpr name(const char (&str)[N]) {
+    if (!detail::xml_name(std::string_view(str, N - 1)))
+      throw std::invalid_argument("Invalid XML name annotation");
     for (std::size_t i = 0; i < N; ++i) value[i] = str[i];
   }
 
@@ -50,12 +124,6 @@ export constexpr cdata_ cdata;
 
 struct exclude_on_empty_ {};
 export constexpr exclude_on_empty_ exclude_on_empty;
-
-constexpr bool is_alpha(const char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
-
-constexpr bool is_num(const char c) { return (c >= '0' && c <= '9'); }
-
-constexpr bool is_alnum(const char c) { return is_alpha(c) || is_num(c); }
 
 export template <std::size_t N = 1, typename F = std::nullptr_t>
 struct format {
@@ -153,9 +221,14 @@ struct iter {
   char multiple[N2] = "";
 
   constexpr iter(const char (&s)[N1]) {
+    if (N1 > 1 && !detail::xml_name(std::string_view(s, N1 - 1)))
+      throw std::invalid_argument("Invalid XML iteration name");
     for (std::size_t i = 0; i < N1; ++i) single[i] = s[i];
   }
   constexpr iter(const char (&s)[N1], const char (&m)[N2]) {
+    if ((N1 > 1 && !detail::xml_name(std::string_view(s, N1 - 1))) ||
+        (N2 > 1 && !detail::xml_name(std::string_view(m, N2 - 1))))
+      throw std::invalid_argument("Invalid XML iteration name");
     for (std::size_t i = 0; i < N1; ++i) single[i] = s[i];
     for (std::size_t i = 0; i < N2; ++i) multiple[i] = m[i];
   }
@@ -339,6 +412,8 @@ consteval auto get_annotations()
       name = "field";
     }
   }
+
+  if (!detail::xml_name(name)) throw std::invalid_argument("Invalid XML member name");
 
   return structural_tuple::tuple{is_attribute,
                                  is_cdata,
@@ -560,7 +635,7 @@ consteval auto get_attribute_prefix() {
 
 thread_local std::vector<std::uint64_t> escape_flags;
 
-auto get_escape_bitmask(std::string_view input) -> std::size_t {
+auto get_escape_bitmask(std::string_view input, bool attribute = false) -> std::size_t {
   using simd_t = std::simd::vec<char>;
   const auto blocks = (input.size() + 63) / 64;
   escape_flags.assign(blocks, 0);
@@ -576,6 +651,10 @@ auto get_escape_bitmask(std::string_view input) -> std::size_t {
       }
     }
   }
+  // Keep normalization-sensitive whitespace out of the partial SIMD mask.
+  detail::validate_xml_text(input, [&](std::size_t index, std::uint32_t c) {
+    if (c == 13 || attribute) escape_flags[index / 64] |= std::uint64_t{1} << (index % 64);
+  });
   return blocks;
 }
 
@@ -612,6 +691,15 @@ auto copy_with_escapes(char* buffer, std::string_view input, std::size_t blocks)
           break;
         case '\'':
           entity = "&apos;";
+          break;
+        case '\r':
+          entity = "&#13;";
+          break;
+        case '\n':
+          entity = "&#10;";
+          break;
+        case '\t':
+          entity = "&#9;";
           break;
         default:
           std::unreachable();
@@ -681,7 +769,7 @@ void add_attribute(std::string& result, std::string& buffer, const auto& value) 
       buffer = format_value<formatter>(value);
     }
 
-    auto padded_size = get_escape_bitmask(buffer);
+    auto padded_size = get_escape_bitmask(buffer, true);
 
     auto num_escapes = count_escapes(padded_size);
 
@@ -772,16 +860,21 @@ void add_child(std::string& result, std::string& buffer, const auto& value) {
       });
     }
   } else if constexpr (is_cdata) {
-    if constexpr (formatter.is_empty() &&
-                  (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>)) {
-      result += "<![CDATA[";
-      result += value;
-      result += "]]>";
-    } else {
-      result += "<![CDATA[";
-      result += format_value<formatter>(value);
-      result += "]]>";
+    buffer = format_value<formatter>(value);
+    detail::validate_xml_text(buffer);
+    result += "<![CDATA[";
+    for (std::size_t i = 0; i < buffer.size();) {
+      if (std::string_view(buffer).substr(i).starts_with("]]>")) {
+        result += "]]]]><![CDATA[>";
+        i += 3;
+      } else if (buffer[i] == '\r') {
+        result += "]]>&#13;<![CDATA[";
+        ++i;
+      } else {
+        result += buffer[i++];
+      }
     }
+    result += "]]>";
   } else {
     if constexpr (formatter.is_empty() && std::is_same_v<T, std::string>) {
       buffer = std::ref(value);
@@ -900,6 +993,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
   if (!fixed_name.empty()) {
     buffer = fixed_name;
   } else {
+    buffer.clear();
     template for (constexpr auto a : annotations) {
       if constexpr (std::meta::has_template_arguments(std::meta::type_of(a)) &&
                     std::meta::template_of(std::meta::type_of(a)) == ^^::serial_xml::name) {
@@ -920,6 +1014,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
     }
   }
 
+  if (!detail::xml_name(buffer)) throw std::invalid_argument("Invalid XML root name");
   std::string name{buffer};
   std::format_to(std::back_inserter(result), "<{}", name);
 
@@ -938,12 +1033,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
     static constexpr auto view_name = std::string_view(m_name);
 
-    static_assert(
-        std::ranges::all_of(
-            view_name, [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
-            !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
-              is_num(view_name[0]) || std::ranges::starts_with(view_name, std::string_view("xml"))),
-        std::string("Invalid XML name: '") + std::string(view_name) + "'");
+    static_assert(detail::xml_name(view_name), "Invalid XML name: " + std::string(view_name));
 
     if constexpr (is_std && std::meta::template_of(value_m_t<source>) == ^^std::optional) {
       handle_stl<true, false, true, false, false, false, m_name, formatter>(
@@ -978,13 +1068,7 @@ void to_xml(const T& value, std::string& result, std::string& buffer, bool first
 
       static constexpr auto view_name = std::string_view(m_name);
 
-      static_assert(
-          std::ranges::all_of(
-              view_name, [](char c) { return is_alnum(c) || c == '_' || c == '-' || c == '.'; }) ||
-              !(view_name[0] == '_' || view_name[0] == '-' || view_name[0] == '.' ||
-                is_num(view_name[0]) ||
-                std::ranges::starts_with(view_name, std::string_view("xml"))),
-          std::string("Invalid XML name: '") + std::string(view_name) + "'");
+      static_assert(detail::xml_name(view_name), "Invalid XML name: " + std::string(view_name));
 
       if constexpr (iter_names.first == nullptr && is_std && !is_no_iter) {
         handle_stl<false, is_cdata, is_no_iter, is_raw, is_exclude_on_empty, is_unpack, m_name,
@@ -1499,10 +1583,7 @@ class xml_reader {
     if (!starts(value)) fail("Expected " + std::string(value));
     position_ += value.size();
   }
-  static bool valid_character(std::uint32_t c) {
-    return c == 9 || c == 10 || c == 13 || (c >= 0x20 && c <= 0xD7FF) ||
-           (c >= 0xE000 && c <= 0xFFFD) || (c >= 0x10000 && c <= 0x10FFFF);
-  }
+  static bool valid_character(std::uint32_t c) { return xml_character(c); }
   static bool plain_ascii(std::string_view value, bool entities) {
     constexpr std::uint64_t high_bits = 0x8080808080808080ULL;
     constexpr std::uint64_t spaces = 0x2020202020202020ULL;
@@ -1642,38 +1723,7 @@ class xml_reader {
     return result;
   }
   void validate_unicode_name(std::string_view result) {
-    decode(result, false);
-    // XML NameStartChar/NameChar ranges are wider than ASCII but narrower than UTF-8.
-    for (std::size_t i = 0; i < result.size();) {
-      auto c = static_cast<unsigned char>(result[i]);
-      std::uint32_t codepoint = c;
-      unsigned length = 1;
-      if (c >= 0x80) {
-        length = c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
-        codepoint = c & (0x7F >> length);
-        for (unsigned j = 1; j < length; ++j)
-          codepoint = (codepoint << 6) | (static_cast<unsigned char>(result[i + j]) & 0x3F);
-      }
-      bool start =
-          codepoint == ':' || codepoint == '_' || (codepoint >= 'A' && codepoint <= 'Z') ||
-          (codepoint >= 'a' && codepoint <= 'z') || (codepoint >= 0xC0 && codepoint <= 0xD6) ||
-          (codepoint >= 0xD8 && codepoint <= 0xF6) || (codepoint >= 0xF8 && codepoint <= 0x2FF) ||
-          (codepoint >= 0x370 && codepoint <= 0x37D) ||
-          (codepoint >= 0x37F && codepoint <= 0x1FFF) ||
-          (codepoint >= 0x200C && codepoint <= 0x200D) ||
-          (codepoint >= 0x2070 && codepoint <= 0x218F) ||
-          (codepoint >= 0x2C00 && codepoint <= 0x2FEF) ||
-          (codepoint >= 0x3001 && codepoint <= 0xD7FF) ||
-          (codepoint >= 0xF900 && codepoint <= 0xFDCF) ||
-          (codepoint >= 0xFDF0 && codepoint <= 0xFFFD) ||
-          (codepoint >= 0x10000 && codepoint <= 0xEFFFF);
-      bool continuation = start || codepoint == '-' || codepoint == '.' ||
-                          (codepoint >= '0' && codepoint <= '9') || codepoint == 0xB7 ||
-                          (codepoint >= 0x300 && codepoint <= 0x36F) ||
-                          (codepoint >= 0x203F && codepoint <= 0x2040);
-      if (!(i == 0 ? start : continuation)) fail("Invalid XML name character");
-      i += length;
-    }
+    if (!xml_name(result)) fail("Invalid XML name character or UTF-8");
   }
   void comment() {
     expect("<!--");
@@ -1814,11 +1864,38 @@ class xml_reader {
         }
         if (!starts("<![CDATA[")) fail("DTD and markup declarations are unsupported");
         position_ += 9;
+        auto begin = position_;
         auto end = input_.find("]]>", position_);
         if (end == std::string_view::npos) fail("Unterminated CDATA");
-        node.text.push_back(node.resource,
-                            {decode(input_.substr(position_, end - position_), false), true});
-        position_ = end + 3;
+        std::string joined;
+        bool split = false;
+        for (;;) {
+          auto section = decode(input_.substr(begin, end - begin), false);
+          if (split) joined += section;
+          position_ = end + 3;
+          bool terminator = section.ends_with("]]") && starts("<![CDATA[>");
+          bool carriage_return = starts("&#13;<![CDATA[");
+          if (!terminator && !carriage_return) {
+            if (split) {
+              auto* data = static_cast<char*>(resource_.allocate(joined.size(), alignof(char)));
+              std::memcpy(data, joined.data(), joined.size());
+              node.text.push_back(node.resource, {{data, joined.size()}, true});
+            } else {
+              node.text.push_back(node.resource, {section, true});
+            }
+            break;
+          }
+          if (!split) joined = section;
+          split = true;
+          if (carriage_return) {
+            joined += '\r';
+            position_ += 5;
+          }
+          position_ += 9;
+          begin = position_;
+          end = input_.find("]]>", position_);
+          if (end == std::string_view::npos) fail("Unterminated CDATA");
+        }
       } else if (input_[position_] == '<' && position_ + 1 < input_.size() &&
                  input_[position_ + 1] == '?') {
         processing_instruction();
@@ -2183,6 +2260,7 @@ void read_xml(T& result, std::string_view xml, const std::string& fixed_name) {
   auto root = reader.read();
   using S = std::conditional_t<std::is_void_v<Schema>, T, Schema>;
   auto expected = fixed_name.empty() ? root_name<T, S>() : fixed_name;
+  if (!xml_name(expected)) throw std::invalid_argument("Invalid XML root name");
   if (root.name != expected) throw deserialization_error("Expected root element: " + expected);
   read_object<T, Schema>(root, result);
 }
@@ -2206,85 +2284,78 @@ T from_xml(std::string_view xml, const std::string& fixed_name = "") {
   return result;
 }
 
+// Indent element-only content; text-bearing and xml:space subtrees stay byte-for-byte intact.
 export auto prettify(const std::string& xml) -> std::string {
-  std::string result;
-  result.reserve(static_cast<std::size_t>(static_cast<double>(xml.size()) * 1.5));
-
-  int indent_level = 0;
-  auto append_indent = [&](int level) {
-    for (int i = 0; i < level; ++i) {
-      result += "  ";
-    }
+  detail::xml_reader reader(xml);
+  [[maybe_unused]] auto root = reader.read();
+  struct token {
+    std::size_t begin;
+    std::size_t end;
+    std::size_t match;
+    int depth;
+    bool preserve = false;
   };
-
-  for (std::size_t i = 0; i < xml.size();) {
-    if (xml[i] == '<') {
-      const std::size_t tag_end = xml.find('>', i);
-      if (tag_end == std::string::npos) {
-        if (!result.empty() && result.back() != '\n') {
-          result += '\n';
-        }
-        append_indent(indent_level);
-        result += xml.substr(i);
-        break;
-      }
-
-      const std::string_view tag(xml.data() + i, tag_end - i + 1);
-      const bool is_closing_tag = tag.size() > 1 && tag[1] == '/';
-      const bool is_declaration = tag.size() > 1 && tag[1] == '?';
-      const bool is_comment = tag.size() > 3 && tag.substr(1, 3) == "!--";
-      const bool is_cdata = tag.size() > 8 && tag.substr(1, 8) == "![CDATA[";
-      const bool is_self_closing = !is_closing_tag && !is_declaration && !is_comment && !is_cdata &&
-                                   tag.size() > 2 && tag[tag.size() - 2] == '/';
-
-      if (is_closing_tag) {
-        indent_level = std::max(0, indent_level - 1);
-      }
-
-      if (!result.empty() && result.back() != '\n') {
-        result += '\n';
-      }
-
-      if (!is_declaration && !is_comment && !is_cdata) {
-        append_indent(indent_level);
-      }
-
-      result.append(tag);
-
-      if (!is_closing_tag && !is_declaration && !is_comment && !is_cdata && !is_self_closing) {
-        ++indent_level;
-      }
-
-      result += '\n';
-      i = tag_end + 1;
+  std::vector<token> tokens;
+  std::vector<std::size_t> stack;
+  const std::size_t bom_size = std::string_view(xml).starts_with("\xEF\xBB\xBF") ? 3 : 0;
+  for (std::size_t i = bom_size; i < xml.size();) {
+    const auto begin = i;
+    if (xml[i] != '<') {
+      i = xml.find('<', i);
+      if (i == std::string::npos) i = xml.size();
+      if (!stack.empty()) tokens[stack.back()].preserve = true;
+      tokens.push_back({begin, i, tokens.size(), static_cast<int>(stack.size()), true});
       continue;
     }
-
-    const std::size_t text_end = xml.find('<', i);
-    const std::size_t length = text_end == std::string::npos ? xml.size() - i : text_end - i;
-    const std::string_view text(xml.data() + i, length);
-    const bool has_content =
-        std::ranges::any_of(text, [](unsigned char ch) { return !std::isspace(ch); });
-
-    if (has_content) {
-      if (!result.empty() && result.back() != '\n') {
-        result += '\n';
+    const auto rest = std::string_view(xml).substr(i);
+    bool special =
+        rest.starts_with("<!--") || rest.starts_with("<![CDATA[") || rest.starts_with("<?");
+    if (special) {
+      auto terminator = rest.starts_with("<!--")        ? "-->"
+                        : rest.starts_with("<![CDATA[") ? "]]>"
+                                                        : "?>";
+      i = xml.find(terminator, i) + std::string_view(terminator).size();
+      if (rest.starts_with("<![CDATA[") && !stack.empty()) tokens[stack.back()].preserve = true;
+    } else {
+      char quote = 0;
+      while (++i < xml.size()) {
+        if (quote) {
+          if (xml[i] == quote) quote = 0;
+        } else if (xml[i] == '\'' || xml[i] == '"') {
+          quote = xml[i];
+        } else if (xml[i] == '>') {
+          ++i;
+          break;
+        }
       }
-      append_indent(indent_level);
-      result.append(text);
-      result += '\n';
     }
-
-    if (text_end == std::string::npos) {
-      break;
+    const auto tag = std::string_view(xml).substr(begin, i - begin);
+    bool closing = tag.starts_with("</");
+    bool opening = !special && !closing && !tag.ends_with("/>");
+    int depth = static_cast<int>(stack.size());
+    if (closing) {
+      --depth;
+      tokens[stack.back()].match = tokens.size();
+      stack.pop_back();
     }
-    i = text_end;
+    tokens.push_back({begin, i, tokens.size(), depth, tag.contains("xml:space")});
+    if (opening) stack.push_back(tokens.size() - 1);
   }
 
-  if (!result.empty() && result.back() == '\n') {
-    result.pop_back();
+  std::string result = xml.substr(0, bom_size);
+  result.reserve(xml.size());
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
+    const auto& t = tokens[i];
+    if (result.size() > bom_size && result.back() != '\n') result += '\n';
+    result.append(static_cast<std::size_t>(t.depth) * 2, ' ');
+    const auto end = tokens[t.match].end;
+    if (t.preserve && t.match != i) {
+      result.append(xml, t.begin, end - t.begin);
+      i = t.match;
+    } else {
+      result.append(xml, t.begin, t.end - t.begin);
+    }
   }
-
   return result;
 }
 }  // namespace serial_xml

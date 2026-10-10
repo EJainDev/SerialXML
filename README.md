@@ -1,10 +1,10 @@
-# SerialXML
+# SerialXML 1.0
 
 ![Banner](./assets/SerialXML.png)
 
 ![Build and Tests](https://github.com/EJainDev/SerialXML/actions/workflows/build-and-test.yml/badge.svg)
 ![C++26](https://img.shields.io/badge/C%2B%2B-26-blue)
-![CMake 4.3+](https://img.shields.io/badge/CMake-4.3%2B-orange)
+![CMake 4.3.3+](https://img.shields.io/badge/CMake-4.3.3%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-lightgray)
 
 > Reflection based XML serialization and deserialization for C++26
@@ -41,10 +41,10 @@ import serial_xml;
 struct Person {
     int age;
     std::string favorite_food;
-}
+};
 
 int main() {
-    std::print(to_xml(Person{3, "pizza"}));
+    std::print("{}", serial_xml::to_xml(Person{3, "pizza"}));
 }
 ```
 
@@ -171,10 +171,20 @@ attribute whitespace follow XML normalization rules.
 cannot be separated and causes an error. `raw` ranges read matching item tags
 directly from the parent. Unpacked objects and automatically handled optionals
 keep their tagged representation even with `raw`, following `to_xml` precedence. CDATA fields read the parent's CDATA sections in member
-order, matching `to_xml`'s unwrapped CDATA output. Optional or externally split
-CDATA fields can be ambiguous; use tagged string fields when boundaries must be
+order, matching `to_xml`'s unwrapped CDATA output. The writer splits `]]>` across CDATA sections and emits carriage returns as
+character references; the reader rejoins those canonical continuations. Adjacent
+fields whose boundaries look exactly like a canonical split (a field ending in
+`]]` followed by one starting in `>`) and optional or externally split CDATA fields
+can be ambiguous; use tagged string fields when boundaries must be
 unambiguous. Standard tagged string fields can contain mixed ordinary text and
 CDATA sections, which are concatenated.
+
+Serialization rejects forbidden XML 1.0 characters and malformed UTF-8 with
+`std::invalid_argument`, including custom formatter output. Carriage returns in
+text and tabs/newlines/carriage returns in attributes use character references to
+preserve their values. Annotation names must be valid XML 1.0 names at compile
+time; invalid runtime root overrides throw `std::invalid_argument`. Unicode,
+underscores, and literal namespace prefixes are accepted.
 
 See [the deserialization example](examples/deserialization.cpp) for round trips,
 custom string conversion, optional fields, and independent setters.
@@ -184,6 +194,18 @@ custom string conversion, optional fields, and independent setters.
 ### CMake FetchContent (Recommended)
 
 ```cmake
+cmake_minimum_required(VERSION 4.3.3)
+# import std is experimental; its opt-in key depends on the CMake version.
+if(CMAKE_VERSION VERSION_LESS 4.4)
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+endif()
+set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_MODULE_STD ON)
+project(my_app LANGUAGES CXX)
+
+include(FetchContent)
 FetchContent_Declare(
     serial_xml
     GIT_REPOSITORY https://github.com/EJainDev/SerialXML.git
@@ -191,8 +213,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(serial_xml)
 
-add_executable(my_tests test.cpp)
-target_link_libraries(my_tests PRIVATE serial_xml::serial_xml)
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE serial_xml::serial_xml)
 ```
 
 ### Install from source
@@ -201,25 +223,35 @@ target_link_libraries(my_tests PRIVATE serial_xml::serial_xml)
 git clone https://github.com/EJainDev/SerialXML.git
 cd SerialXML
 
-cmake --preset "release-gcc-16"
-cmake --build build
-
-cmake --install build
+cmake --preset release-gcc -DBUILD_BENCHMARKS=OFF
+cmake --build --preset build-release
+cmake --install build/release --prefix "$HOME/.local"
 ```
 
-Then, in your `CMakeLists.txt`, put:
+Use the same compiler and standard-module setup shown above, then replace the
+FetchContent block with:
 ```cmake
-find_package(SerialXML REQUIRED)
+find_package(SerialXML 1.0 CONFIG REQUIRED)
+add_executable(my_app main.cpp)
 target_link_libraries(my_app PRIVATE serial_xml::serial_xml)
 ```
+
+Configure your application with `-DCMAKE_PREFIX_PATH="$HOME/.local"` for this
+install prefix. A source install also installs the fetched StructuralTuple dependency;
+if using an existing StructuralTuple package, make its prefix available to consumers too.
+Reflection compiler options and the C++26 requirement propagate from the library target.
+FetchContent builds default to disabling examples and benchmarks when embedded.
 
 ### Requirements
 
 | Component | Min Version | Notes |
 | --------- | ----------- | ----- |
 Compiler | GCC 16.1 | C++26 SIMD, Reflection, and more |
-CMake | 4.3 | Change `std` experiment key for lower versions |
+CMake | 4.3.3 | Ninja; experimental `import std` enabled before `project()` |
 C++ Standard | 26 | SIMD, Reflection, Annotations |
+
+The dev container uses GCC 16.2.0 and CMake 4.4.3. Other compilers are not currently
+supported. StructuralTuple is pinned to a tested commit.
 
 ## Benchmarks
 
@@ -375,7 +407,15 @@ See [the mocking example](examples/mocking.cpp).
 
 ### The `prettify` function
 
-A simple function to prettify (add indentation and newlines) the generated XML output. The only parameter is the output and it returns a new string with the output.
+`serial_xml::prettify(xml)` validates the input and returns XML with two-space
+indentation for element-only content. Subtrees containing direct text (including
+whitespace), CDATA, or an `xml:space` attribute retain their original bytes. This
+preserves string leaf values and mixed content, including quoted `>` characters,
+comments, and processing instructions. Malformed input throws `deserialization_error`.
+
+Indentation adds whitespace between elements. Use compact `to_xml` output for
+round trips involving raw scalar fields alongside child elements, or when every
+whitespace node matters.
 
 ## Examples
 
@@ -384,9 +424,9 @@ major SerialXML feature. Examples are built by default; configure the project an
 run an executable from the build directory, for example:
 
 ```bash
-cmake --preset "release-gcc-16"
-cmake --build build
-./build/examples/hello_world
+cmake --preset release-gcc -DBUILD_BENCHMARKS=OFF
+cmake --build --preset build-release
+./build/release/examples/hello_world
 ```
 
 Set `-D BUILD_EXAMPLES=OFF` when configuring CMake to omit them from your build.

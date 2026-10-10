@@ -27,10 +27,10 @@ Before submitting a bug report, ensure the issue hasn't been reported already. P
 
 To report compile errors, specify:
 1. The exact error message or symptom.
-2. The compiler and version (for example, GCC 16.1) and the CMake version used (for example, 4.3.0).
+2. The compiler and version (for example, GCC 16.1) and the CMake version used (for example, 4.4.3).
 3. The full compiler output / compilation log.
 4. A minimal, self-contained reproducible example (smallest code that reproduces the problem).
-5. The exact build commands or CMake preset used to reproduce the issue (for example: `cmake --preset debug-gcc-16` and `cmake --build --preset build-debug`).
+5. The exact build commands or CMake preset used to reproduce the issue (for example: `cmake --preset debug-test-gcc` and `cmake --build --preset build-debug-test`).
 
 ### Runtime Bugs
 
@@ -57,14 +57,15 @@ When possible, prefer **Implement and test (PR)** so the change can be reviewed 
 ## Local Setup Instructions
 
 1. Clone the repository.
-2. Install GCC 16.1 and CMake 4.3 or higher.
-3. Configure the project using the `debug-gcc-16` preset: `cmake --preset debug-gcc-16`
-4. Build the project using the `build-debug` preset: `cmake --build --preset build-debug`
+2. Install GCC 16.1 and CMake 4.3.3 or higher.
+3. Configure the project using the `debug-test-gcc` preset: `cmake --preset debug-test-gcc`
+4. Build the project using the `build-debug-test` preset: `cmake --build --preset build-debug-test`
 
 ## Testing Guidelines
 
 - Use Google Test as the testing framework.
-- Run the full test suite before submitting changes: `ctest --preset build-debug`
+- Run the full test suite before submitting changes: `ctest --test-dir build/debug --output-on-failure --no-tests=error`
+- Check both consumer paths after a build: `cmake -DSERIAL_XML_SOURCE_DIR="$PWD" -DSERIAL_XML_BINARY_DIR="$PWD/build/debug" -P tests/consumer/run.cmake`.
 - All tests must pass. Do not break existing functionality.
 - Add new tests for new features.
 - Add regression tests for bug fixes.
