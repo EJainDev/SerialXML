@@ -1,3 +1,4 @@
+#include <boost/archive/xml_iarchive.hpp>
 #include <boost/archive/xml_oarchive.hpp>
 #include <boost/serialization/nvp.hpp>
 #include <boost/serialization/string.hpp>
@@ -16,7 +17,8 @@ namespace {
 // Each library serializes this same logical payload: an order with customer
 // details, line items, and an integer tag list. The generated XML differs in
 // incidental archive metadata and container naming, so benchmark results
-// should be compared as serialization throughput rather than output size.
+// should be compared as logical orders per second rather than XML bytes per second.
+// Deserialization includes parsing, numeric conversion, and owning object construction.
 
 struct Address {
   std::string street;
@@ -193,6 +195,84 @@ std::string pugixml_serialize(const Order& order) {
   return std::move(writer.output);
 }
 
+std::string boost_serialize(const BoostOrder& order) {
+  std::ostringstream output;
+  {
+    boost::archive::xml_oarchive archive(output, boost::archive::no_header);
+    archive << boost::serialization::make_nvp("order", order);
+  }
+  return output.str();
+}
+
+std::string cereal_serialize(const CerealOrder& order) {
+  std::ostringstream output;
+  {
+    // cereal writes the XML document when the output archive is destroyed.
+    cereal::XMLOutputArchive archive(output);
+    archive(cereal::make_nvp("order", order));
+  }
+  return output.str();
+}
+
+BoostOrder boost_deserialize(const std::string& xml) {
+  BoostOrder order{};
+  std::istringstream input(xml);
+  {
+    boost::archive::xml_iarchive archive(input, boost::archive::no_header);
+    archive >> boost::serialization::make_nvp("order", order);
+  }
+  return order;
+}
+
+CerealOrder cereal_deserialize(const std::string& xml) {
+  CerealOrder order{};
+  std::istringstream input(xml);
+  cereal::XMLInputArchive archive(input);
+  archive(cereal::make_nvp("order", order));
+  return order;
+}
+
+Order pugixml_deserialize(const std::string& xml) {
+  pugi::xml_document document;
+  auto parsed = document.load_buffer(xml.data(), xml.size());
+  if (!parsed) throw std::runtime_error(parsed.description());
+  auto root = document.child("order");
+  Order order{};
+  order.id = root.child("id").text().as_ullong();
+  order.customer = root.child("customer").text().as_string();
+  auto address = root.child("shipping_address");
+  order.shipping_address = {address.child("street").text().as_string(),
+                            address.child("city").text().as_string(),
+                            address.child("postal_code").text().as_string()};
+  for (auto node : root.child("items").children("item")) {
+    order.items.push_back(
+        {node.child("sku").text().as_string(), node.child("description").text().as_string(),
+         node.child("quantity").text().as_int(), node.child("unit_price").text().as_double()});
+  }
+  for (auto node : root.child("tags").children("tag")) {
+    order.tags.push_back(node.text().as_int());
+  }
+  return order;
+}
+
+template <typename T>
+void verify_order(std::string_view library, const T& actual, const Order& expected) {
+  bool matches = actual.id == expected.id && actual.customer == expected.customer &&
+                 actual.shipping_address.street == expected.shipping_address.street &&
+                 actual.shipping_address.city == expected.shipping_address.city &&
+                 actual.shipping_address.postal_code == expected.shipping_address.postal_code &&
+                 actual.tags == expected.tags && actual.items.size() == expected.items.size();
+  if (matches) {
+    for (std::size_t i = 0; i < actual.items.size(); ++i) {
+      const auto& a = actual.items[i];
+      const auto& e = expected.items[i];
+      matches = matches && a.sku == e.sku && a.description == e.description &&
+                a.quantity == e.quantity && a.unit_price == e.unit_price;
+    }
+  }
+  if (!matches) throw std::runtime_error(std::string(library) + " failed round-trip validation");
+}
+
 template <typename Function>
 void benchmark(std::string_view name, Function&& function, std::size_t iterations,
                std::size_t warmup_iterations) {
@@ -228,17 +308,35 @@ int main(int argc, char** argv) {
   std::size_t warmup_iterations = 1'000;
 
   if (argc > 1) {
-    iterations = std::stoull(argv[1]);
+    iterations = serial_xml::from_string<std::size_t>(argv[1]);
   }
 
   if (argc > 2) {
-    warmup_iterations = std::stoull(argv[2]);
+    warmup_iterations = serial_xml::from_string<std::size_t>(argv[2]);
+  }
+
+  if (iterations == 0) {
+    std::println(std::cerr, "Iterations must be greater than zero");
+    return 1;
   }
 
   const auto serial_order = make_serial_xml_order();
   const auto boost_order = make_boost_order();
   const auto cereal_order = make_cereal_order();
 
+  // Build each library's own input once, outside all timed loops.
+  const auto serial_input = serial_xml::to_xml(serial_order, false, "order");
+  const auto boost_input = boost_serialize(boost_order);
+  const auto cereal_input = cereal_serialize(cereal_order);
+  const auto pugi_input = pugixml_serialize(serial_order);
+  verify_order("serial_xml", serial_xml::from_xml<Order>(serial_input, "order"), serial_order);
+  verify_order("boost_xml", boost_deserialize(boost_input), serial_order);
+  verify_order("cereal_xml", cereal_deserialize(cereal_input), serial_order);
+  verify_order("pugixml", pugixml_deserialize(pugi_input), serial_order);
+  std::println("Round-trip validation passed for all four libraries.");
+  std::println("XML input bytes: serial_xml={}, boost_xml={}, cereal_xml={}, pugixml={}",
+               serial_input.size(), boost_input.size(), cereal_input.size(), pugi_input.size());
+  std::println("Serialization (object -> complete XML):");
   benchmark(
       "serial_xml",
       [&] {
@@ -252,11 +350,7 @@ int main(int argc, char** argv) {
   benchmark(
       "boost_xml",
       [&] {
-        std::ostringstream output;
-        boost::archive::xml_oarchive archive(output, boost::archive::no_header);
-        archive << boost::serialization::make_nvp("order", boost_order);
-
-        const auto xml = output.str();
+        const auto xml = boost_serialize(boost_order);
 
         asm volatile("" : : "g"(xml.data()), "g"(xml.size()) : "memory");
       },
@@ -265,11 +359,7 @@ int main(int argc, char** argv) {
   benchmark(
       "cereal_xml",
       [&] {
-        std::ostringstream output;
-        cereal::XMLOutputArchive archive(output);
-        archive(cereal::make_nvp("order", cereal_order));
-
-        const auto xml = output.str();
+        const auto xml = cereal_serialize(cereal_order);
 
         asm volatile("" : : "g"(xml.data()), "g"(xml.size()) : "memory");
       },
@@ -280,6 +370,36 @@ int main(int argc, char** argv) {
       [&] {
         auto xml = pugixml_serialize(serial_order);
         asm volatile("" : : "g"(xml.data()), "g"(xml.size()) : "memory");
+      },
+      iterations, warmup_iterations);
+
+  std::println("Deserialization (XML -> new object, including parsing):");
+  benchmark(
+      "serial_xml",
+      [&] {
+        auto order = serial_xml::from_xml<Order>(serial_input, "order");
+        asm volatile("" : : "g"(&order) : "memory");
+      },
+      iterations, warmup_iterations);
+  benchmark(
+      "boost_xml",
+      [&] {
+        auto order = boost_deserialize(boost_input);
+        asm volatile("" : : "g"(&order) : "memory");
+      },
+      iterations, warmup_iterations);
+  benchmark(
+      "cereal_xml",
+      [&] {
+        auto order = cereal_deserialize(cereal_input);
+        asm volatile("" : : "g"(&order) : "memory");
+      },
+      iterations, warmup_iterations);
+  benchmark(
+      "pugixml",
+      [&] {
+        auto order = pugixml_deserialize(pugi_input);
+        asm volatile("" : : "g"(&order) : "memory");
       },
       iterations, warmup_iterations);
 }

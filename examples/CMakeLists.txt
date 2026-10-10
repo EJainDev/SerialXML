@@ -36,3 +36,6 @@ target_link_libraries(optional_types PRIVATE serial_xml)
 
 add_executable(mocking mocking.cpp)
 target_link_libraries(mocking PRIVATE serial_xml)
+
+add_executable(deserialization deserialization.cpp)
+target_link_libraries(deserialization PRIVATE serial_xml)
