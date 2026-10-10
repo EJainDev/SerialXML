@@ -1,197 +1,120 @@
 # SerialXML 1.0
 
-![Banner](./assets/SerialXML.png)
+![SerialXML banner](assets/SerialXML.png)
 
-![Build and Tests](https://github.com/EJainDev/SerialXML/actions/workflows/build-and-test.yml/badge.svg)
+[![Build and Tests](https://github.com/EJainDev/SerialXML/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/EJainDev/SerialXML/actions/workflows/build-and-test.yml)
 ![C++26](https://img.shields.io/badge/C%2B%2B-26-blue)
 ![CMake 4.3.3+](https://img.shields.io/badge/CMake-4.3.3%2B-orange)
-![License](https://img.shields.io/badge/license-MIT-lightgray)
+[![MIT License](https://img.shields.io/badge/license-MIT-lightgray)](LICENSE)
 
-> Reflection based XML serialization and deserialization for C++26
+> Reflection based XML serialization and deserialization for C++26.
 
-SerialXML is a C++26 reflection based serialization library for XML. Behaviour is configurable via annotations on object members and object type declarations (`class/struct`). Invalid annotation combinations are diagnosed at compile time. Deserialization reports malformed XML, missing required members, and invalid values through `serial_xml::deserialization_error`.
+SerialXML turns regular C++ classes and structs into XML, and XML back into objects.
+Simply import the module and call `to_xml` or `from_xml`. No boilerplate required!
+
+Want more control? Add annotations to members or class declarations to name tags,
+use attributes, skip fields, and configure formatting. Invalid annotation
+combinations are diagnosed at compile time. Deserialization reports malformed
+XML, missing required members, and invalid values through
+`serial_xml::deserialization_error`.
+
+**Requires GCC 16.1+, CMake 4.3.3+, and Ninja.** The dev container provides a matching environment.
 
 ## Table of Contents
-* [Quick Start](#quick-start)
-* [Installation](#installation)
-  * [FetchContent](#cmake-fetchcontent-recommended)
-  * [Source](#install-from-source)
-  * [Requirements](#requirements)
-* [Benchmarks](#benchmarks)
-* [Deserialization](#deserialization)
-* [Annotations](#annotations)
-  * [Common Confusion Points](#common-confusion-points)
-  * [Configuring `to_xml`](#configuring-to_xml)
-  * [Mocking classes](#mocking-classes)
-  * [The `prettify` function](#the-prettify-function)
-* [Examples](#examples)
-* [Contributing](#contributing)
-* [License](#license)
+
+- [Benchmarks](#benchmarks)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Annotations](#annotations)
+- [Serialization](#serialization)
+- [Deserialization](#deserialization)
+- [Examples](#examples)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Benchmarks
+
+No boilerplate, and fast too. In this order benchmark, SerialXML deserialization
+was **3.8× faster than cereal, 16.8× faster than Boost, and 9% faster than pugixml**.
+
+| Library | Serialization (ns/order) | Deserialization (ns/order) |
+| --- | ---: | ---: |
+| **SerialXML** | **830.308** | **849.361** |
+| Boost.Serialization | 6959.951 | 14250.021 |
+| cereal | 7699.705 | 3195.171 |
+| pugixml | 1523.398 | 936.498 |
+
+Lower is better. Measured on an Intel Core 7 240H with GCC 16.2.0.
+
+Reproduce in the dev container (choose an available CPU on your machine):
+
+```sh
+cmake --preset release-test-gcc -DBUILD_BENCHMARKS=ON
+cmake --build --preset build-release-test
+ctest --test-dir build/release --output-on-failure
+taskset -c 4 ./build/release/benchmarks/xml_serialization_benchmarks 100000 1000
+```
+
+See [the benchmark source](benchmarks) for the workload and validation. Run five
+times sequentially to compare medians.
 
 ## Quick Start
 
-Getting started is easy. Simply import the module and call `to_xml` on any regular C++ struct. No modifications required to anything!
+Getting started is easy. Import the module and call `to_xml` on a regular C++
+struct. No modifications required to the struct!
 
 ```cpp
 // main.cpp
-
 import std;
 import serial_xml;
 
 struct Person {
-    int age;
-    std::string favorite_food;
+  int age;
+  std::string favorite_food;
 };
 
 int main() {
-    std::print("{}", serial_xml::to_xml(Person{3, "pizza"}));
+  const auto xml = serial_xml::to_xml(Person{3, "pizza"});
+  std::println("{}", serial_xml::prettify(xml));
 }
 ```
 
-That's all you need: one function call and SerialXML does the rest.
-
-## Deserialization
-
-`serial_xml::from_xml<T>(xml)` constructs a value-initialized `T` and reconstructs it
-using the same member names, attributes, nesting, iteration, escaping, and mock
-annotations as `to_xml`. `serial_xml::from_xml<T, Schema>(xml)` uses an external mock
-schema. Both accept an optional root-name override as their second argument.
-For an existing object, including one without a default constructor, use
-`serial_xml::from_xml<Schema>(object, xml, fixed_name)`; omit `Schema` for the object's
-own annotations. The in-place form snapshots the input so XML stored in an updated
-field remains safe, and parses it before updating the object. A later conversion
-error or throwing setter can leave earlier members updated.
-
-```cpp
-struct Person {
-    [[= serial_xml::attribute]] int age;
-    std::string name;
-    [[= serial_xml::optional]] std::string nickname = "unknown";
-};
-
-auto person = serial_xml::from_xml<Person>(
-    "<Person age='21'><name>Ekansh</name></Person>");
-// person.nickname remains "unknown".
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Person>
+  <age>3</age>
+  <favorite_food>pizza</favorite_food>
+</Person>
 ```
 
-Members are **required** unless marked `[[= serial_xml::optional]]`, skipped, or
-omitted naturally by serialization. Unless explicitly marked `optional`, missing `std::optional<T>` members are reset
-to `std::nullopt`; missing automatically iterated `exclude_on_empty` members are
-reset to an empty value.
-An absent explicitly optional member keeps its initializer (or its current value
-with the in-place API). An empty element counts as present: it produces an empty
-string or range but fails numeric conversion. Fixed arrays require the exact
-number of elements. Raw ranges may have no elements because their enclosing tag
-is omitted. Skipped fields and unselected mock fields keep their initialized values.
-Unknown attributes and child elements are ignored; duplicate matched singleton
-elements and duplicate XML attributes are rejected. XML child/attribute order
-is otherwise independent of C++ member order.
+That's all you need: one function call and SerialXML does the rest. `to_xml`
+returns compact XML; `prettify` makes it easier to read.
 
-### Leaf conversion with `from_string`
-
-Every non-unpacked leaf is converted through
-`serial_xml::from_string<T>(std::string_view)`. Built-in implementations cover
-arithmetic types (including booleans), `std::string`, `std::optional`, pairs,
-tuples, and owning STL sequences, sets, and maps. Numbers must consume the entire
-input after trimming surrounding XML whitespace; overflow and invalid text throw
-`deserialization_error`. Booleans accept `true`, `false`, `1`, and `0`; characters
-use their numeric value, matching `to_xml`. Strings retain whitespace.
-
-Container conversion reads the standard formatted representations, such as
-`[1, 2]`, `(1, "text")`, and `{"key": 3}`, including nested containers and quoted
-strings. XML iteration handles `vector`, `array`, `inplace_vector`, `deque`,
-`forward_list`, and `valarray` automatically. Use `iter` for other owning ranges.
-Borrowed views (`span`, `string_view`, pointers) have no built-in reconstruction:
-provide an implementation with an appropriate storage lifetime if you need them.
-
-A custom leaf type requires an explicit specialization, declared before the first
-call that needs it. An unpacked class uses reflection instead.
+To read it back, use the same type:
 
 ```cpp
-struct Code { int value; };
-
-template <>
-Code serial_xml::from_string<Code>(std::string_view text) {
-    return {serial_xml::from_string<int>(text)};
-}
+const auto person = serial_xml::from_xml<Person>(xml);
+// person.age == 3, person.favorite_food == "pizza"
 ```
 
-`format` continues to determine whether a value is represented as text.
-Deserialization passes that text to `from_string`; it does not try to invert
-custom formatter functions or lossy format strings. Decimal zero padding works
-with the default numeric parser. Custom prefixes, hexadecimal representations,
-alignment fill, or other representations need a matching `from_string`
-implementation. Lost precision cannot be recovered.
-
-### Setters and encapsulation
-
-Accessible const getters can be reconstructed through a matching non-static setter
-with exactly one parameter of the same value type (references and cv qualifiers
-are ignored). Supported conventions are `value()` → `value(T)` or `set_value(T)`,
-`get_value()` → `set_value(T)`, and `getValue()` → `setValue(T)`. XML naming and
-annotations come from the getter. Getters without a matching setter are ignored
-by deserialization. Non-function members that cannot be assigned produce a
-compile-time error; mark them `skip` to omit them.
-
-Use `[[= serial_xml::setter]]` to select a method independently, without requiring
-a getter. It must be an accessible non-static method with one parameter. Its
-parameter type controls reconstruction, and its own annotations control XML
-naming, attributes, optionality, and iteration. By default `set_value` reads
-`value` and `setValue` reads `value`; other method names are used literally.
-`name` overrides this. Setters are ignored by `to_xml`.
-
-```cpp
-class Account {
- public:
-    [[= serial_xml::skip]] int balance() const { return balance_; }
-    [[= serial_xml::setter, = serial_xml::name{"balance"}]]
-    void deposit_balance(int amount) { balance_ = amount; }
- private:
-    int balance_ = 0;
-};
-```
-
-An explicitly selected setter takes precedence over automatic reconstruction of
-its matching getter, so it is invoked once. Setter annotations can also live on
-a mock schema; placeholder methods do not need definitions. Ambiguous setter
-overloads are diagnosed at compile time.
-
-### XML input and text annotations
-
-The reader supports UTF-8 XML 1.0, a UTF-8 BOM, XML declarations, quoted attributes,
-self-closing elements, comments, processing instructions, CDATA, the five predefined
-entities, and decimal/hexadecimal Unicode character references. It rejects
-mismatched tags, invalid characters/UTF-8, unclosed structures, invalid numeric
-values, missing required members, and multiple roots. DTDs and external entities
-are unsupported. Namespace prefixes are matched literally; namespace declarations
-are not resolved. Nesting is limited to 256 elements. Line endings and literal
-attribute whitespace follow XML normalization rules.
-
-`raw` scalar fields read the parent's direct text; more than one raw scalar field
-cannot be separated and causes an error. `raw` ranges read matching item tags
-directly from the parent. Unpacked objects and automatically handled optionals
-keep their tagged representation even with `raw`, following `to_xml` precedence. CDATA fields read the parent's CDATA sections in member
-order, matching `to_xml`'s unwrapped CDATA output. The writer splits `]]>` across CDATA sections and emits carriage returns as
-character references; the reader rejoins those canonical continuations. Adjacent
-fields whose boundaries look exactly like a canonical split (a field ending in
-`]]` followed by one starting in `>`) and optional or externally split CDATA fields
-can be ambiguous; use tagged string fields when boundaries must be
-unambiguous. Standard tagged string fields can contain mixed ordinary text and
-CDATA sections, which are concatenated.
-
-Serialization rejects forbidden XML 1.0 characters and malformed UTF-8 with
-`std::invalid_argument`, including custom formatter output. Carriage returns in
-text and tabs/newlines/carriage returns in attributes use character references to
-preserve their values. Annotation names must be valid XML 1.0 names at compile
-time; invalid runtime root overrides throw `std::invalid_argument`. Unicode,
-underscores, and literal namespace prefixes are accepted.
-
-See [the deserialization example](examples/deserialization.cpp) for round trips,
-custom string conversion, optional fields, and independent setters.
+See [Installation](#installation) for the CMake setup, or jump to
+[Examples](#examples) for more small programs.
 
 ## Installation
 
-### CMake FetchContent (Recommended)
+### Requirements
+
+| Component | Minimum version | Notes |
+| --- | --- | --- |
+| Compiler | GCC 16.1 | C++26 reflection, annotations, and SIMD |
+| CMake | 4.3.3 | Enable experimental `import std` before `project()` |
+| Build system | Ninja | Used by the repository presets |
+| C++ standard | 26 | Required by the library |
+
+The dev container uses GCC 16.2.0 and CMake 4.4.3. Other compilers are not currently
+supported. StructuralTuple is pinned to a tested commit.
+
+### CMake FetchContent (recommended)
 
 ```cmake
 cmake_minimum_required(VERSION 4.3.3)
@@ -230,6 +153,7 @@ cmake --install build/release --prefix "$HOME/.local"
 
 Use the same compiler and standard-module setup shown above, then replace the
 FetchContent block with:
+
 ```cmake
 find_package(SerialXML 1.0 CONFIG REQUIRED)
 add_executable(my_app main.cpp)
@@ -242,135 +166,82 @@ if using an existing StructuralTuple package, make its prefix available to consu
 Reflection compiler options and the C++26 requirement propagate from the library target.
 FetchContent builds default to disabling examples and benchmarks when embedded.
 
-### Requirements
-
-| Component | Min Version | Notes |
-| --------- | ----------- | ----- |
-Compiler | GCC 16.1 | C++26 SIMD, Reflection, and more |
-CMake | 4.3.3 | Ninja; experimental `import std` enabled before `project()` |
-C++ Standard | 26 | SIMD, Reflection, Annotations |
-
-The dev container uses GCC 16.2.0 and CMake 4.4.3. Other compilers are not currently
-supported. StructuralTuple is pinned to a tested commit.
-
-## Benchmarks
-
-The same executable compares serialization and deserialization with SerialXML,
-Boost.Serialization XML archives, cereal XML archives, and pugixml. Every library
-handles the same logical order: customer details, a shipping address, three line
-items, and four integer tags. Each library reads its own serialized representation;
-archive metadata and container tag names differ, so compare time per order rather
-than XML bytes per second.
-
-Measured on October 9, 2026, with GCC 16.2.0, the Release preset (`-O3 -DNDEBUG`),
-and an Intel Core 7 240H. Results are the median of five optimized runs from
-alternating before/after pairs, each pinned to logical CPU 4 (a performance core),
-with 100,000 measured iterations and 1,000 warm-up iterations per library and
-operation. Lower times are better.
-
-| Library | Serialization (ns/order) | Deserialization (ns/order) | XML input bytes |
-| --- | --- | --- | --- |
-| SerialXML | 830.308 | 849.361 | 708 |
-| Boost.Serialization | 6959.951 | 14250.021 | 1111 |
-| cereal | 7699.705 | 3195.171 | 936 |
-| pugixml | 1523.398 | 936.498 | 671 |
-
-The optimized deserializer uses borrowed input views, an 8 KiB stack-backed
-bump arena with heap fallback, stable append-only node lists, a single validated
-scan for plain text, and field lookup specialized for constant schema names.
-Destination ranges reserve their final size. Heap allocations for this order
-dropped from 67 to 5. Returned strings and containers own their contents; the
-temporary views and arena do not escape reconstruction.
-
-Five alternating before/after benchmark pairs on the same CPU measured SerialXML
-deserialization at 3,887.278 ns before and 849.361 ns after: approximately **4.6×
-faster**. Serialization measured 854.624 ns before and 830.308 ns after, with no
-measured regression; its implementation is unchanged by these optimizations.
-SerialXML beat all three existing comparators in every optimized run. Its median
-deserialization time was approximately 9% lower than pugixml's, 3.8× faster than
-cereal, and 16.8× faster than Boost. These local measurements of a small order
-are not a general ranking across XML workloads.
-
-Deserialization includes XML parsing, numeric conversion, construction of an
-owning result object, and cleanup. Input XML is prepared outside the timed loops.
-All reconstructed fields are checked before timing; compiler barriers keep timed
-results observable. The pugixml comparison uses handwritten field mapping for
-valid input, whereas SerialXML also checks required members. Serialization
-includes completion and destruction of output archives before capturing the XML;
-these results supersede the historical table that captured archive output early.
-
-Reproduce with the repository's GCC 16 dev container:
-
-```sh
-cmake --preset release-test-gcc -DBUILD_BENCHMARKS=ON
-cmake --build --preset build-release-test
-ctest --test-dir build/release --output-on-failure
-taskset -c 4 ./build/release/benchmarks/xml_serialization_benchmarks 100000 1000
-```
-
-The two optional arguments specify measured and warm-up iteration counts. Omit
-`taskset -c 4` or choose an available performance-core CPU on another machine.
-Repeat the benchmark five times sequentially to compare median timings. The
-executable reports both operations and the XML input sizes, and refuses to time
-payloads that fail round-trip validation.
-
 ## Annotations
 
-This library is annotation driven, which means that most customization points are exposed via C++26 annotations. The reason behind this design choice is to create consistency and visually associate the output structure to the definition.
+This library is annotation driven. Most customization points are exposed via
+C++26 annotations, so the XML structure stays visually associated with the C++
+definition.
 
-By default, all members are treated as children of the parent struct with closing tags the same as the name of the member. However, if a struct is not formattable, it by default is unpacked. Many STL ranges and the `std::optional` container are also handled by default. A `std::optional` member is omitted if it does not contain a value.
+By default, members become child elements named after the member. Classes that
+cannot be formatted are unpacked into their own members. Many STL ranges and
+`std::optional` are handled automatically; an empty `std::optional` is omitted.
 
-This is the complete list of annotations:
-- `[[=attribute]]` -- Mark a struct member as a XML attribute instead of a child.
-- `[[=raw]]` -- Mark a struct member to be emitted as raw text instead of being surrounded by closing tags with the same name as the member.
-- `[[=skip]]` -- Don't include this struct member in the generated XML output.
-- `[[=name{"custom_name"}]]` -- Specify the name of this attribute or child tag to be something other than the name of the member. Note: You can also specify this on the struct to control its closing tag (eg. generate `person` instead of `Person` for `struct Person` with `[[=name{"person"}]]`).
-- `[[=unpack]]` -- Instead of calling `std::format` on the member object, generate an enclosing XML tag for it and serialize its members as well.
-- `[[=no_unpack]]` -- Call `std::format` on the member object instead of breaking it down into its children. Opposite of `unpack`.
-- `[[=iter{a, b}]]` -- For classes satisfying `std::ranges::range`, iterate through each member instead of directly calling `std::format`. The first (optional) parameter is the name of the tag for each element in the range. The second (optional) parameter is the name of the range tag enclosing each element.
-- `[[=no_iter]]` -- The opposite of `iter` to disable automatic iteration of STL ranges. See the confusion points for more information on STL handling.
-- `[[=format{"format_specifier"}]]` -- Add a format specifier in the call to `std::format` for that member. Do not prefix with a colon (`:`) as the library handles that on its own. `[[=format{format_function}]]` instead calls a custom formatting function that accepts the member value and returns a string-like value.
-- `[[=setter]]` -- Mark a one-parameter method as an independent XML input property.
-- `[[=optional]]` -- Allow a field or selected setter to be absent during reconstruction.
-- `[[=cdata]]` -- Emit the value inside `cdata` (`<![CDATA[your_content]]>`) tags.
-- `[[=exclude_on_empty]]` -- Do not emit any tags when the range is empty
+For example, here's how to make `age` an attribute and rename `favorite_food`:
 
-### Common Confusion Points
+```cpp
+struct Person {
+  [[= serial_xml::attribute]] int age;
+  [[= serial_xml::name{"food"}]] std::string favorite_food;
+};
 
-1. For *some* STL containers, the library automatically iterates through them. Therefore, your generated XML will not match the expectations. To avoid this, add the `[[=no_iter]]` annotation to object member. The current list of STL containers that are automatically iterated:
-    - `std::vector`
-    - `std::array`
-    - `std::inplace_vector`
-    - `std::deque`
-    - `std::forward_list`
-    - `std::span`
-    - `std::valarray`
-1. The precedence order for STL handled ranges is as follows:
-    1. `exclude_on_empty`
-    1. `raw` -- note that this only applies to the outer layer of tags for the range. Not each individual element in the range
-    1. `cdata`
-1. The precedence order for children is as follows:
-    1. STL Handling (see above)
-    1. `raw`
-    1. Iteration
-    1. Unpacking
-    1. CData
-1. `format` is ignored for unpacked or iterated members
+const auto xml = serial_xml::to_xml(Person{3, "pizza"}, false);
+// <Person age="3"><food>pizza</food></Person>
+```
+
+The annotations below live in the `serial_xml` namespace. Use the qualified name,
+as above, or bring the annotations into scope.
+
+| Annotation | What it does | Details |
+| --- | --- | --- |
+| `[[=attribute]]` | Emit a member as an XML attribute. | Uses the member name unless overridden by `name`. |
+| `[[=name{"custom_name"}]]` | Rename an attribute or element. | Also works on a class or struct to rename its root element. |
+| `[[=skip]]` | Omit a member. | Ignored by serialization and deserialization. |
+| `[[=raw]]` | Emit text without the member's enclosing tag. | For ranges, removes the outer range tag, not the item tags. Text is still XML-escaped. |
+| `[[=cdata]]` | Emit the value in a CDATA section. | Produces `<![CDATA[your_content]]>`. |
+| `[[=unpack]]` | Serialize an object's members inside an enclosing element. | Uses reflection instead of `std::format`. |
+| `[[=no_unpack]]` | Format an object as text. | Disables unpacking. |
+| `[[=iter{a, b}]]` | Iterate a range instead of formatting it as text. | Optional `a` names each item; optional `b` names the enclosing range tag. |
+| `[[=no_iter]]` | Disable automatic range iteration. | Uses the range's formatted representation. |
+| `[[=exclude_on_empty]]` | Omit tags for an empty range. | See the precedence rules below. |
+| `[[=format{"format_specifier"}]]` | Pass a format specifier to `std::format`. | Leave out the leading `:`; SerialXML adds it. |
+| `[[=format{format_function}]]` | Use a custom formatting function. | Accepts the member value and returns a string-like value. |
+| `[[=optional]]` | Allow a field or selected setter to be absent when reading. | An absent member keeps its initializer or current value. |
+| `[[=setter]]` | Select a one-parameter method for XML input. | Ignored by `to_xml`; see [Setters and encapsulation](#setters-and-encapsulation). |
+
+### Common confusion points
+
+Some STL containers are automatically iterated. If you want their formatted text
+instead, add `[[=serial_xml::no_iter]]` to the member. The automatically iterated
+containers are `std::vector`, `std::array`, `std::inplace_vector`, `std::deque`,
+`std::forward_list`, `std::span`, and `std::valarray`.
+
+When annotations overlap, precedence matters:
+
+| Context | Precedence (highest first) |
+| --- | --- |
+| Automatically handled STL ranges | `exclude_on_empty` → `raw` → `cdata` |
+| Child members | STL handling → `raw` → iteration → unpacking → `cdata` |
+
+For ranges, `raw` only removes the outer layer of tags. Individual elements keep
+their tags. `format` is ignored for unpacked or iterated members.
+
+## Serialization
 
 ### Configuring `to_xml`
 
-The function signature of `to_xml` is the following:
+`to_xml` accepts the object, an XML declaration flag, and an optional root name:
 
-```
+```cpp
 template <typename Mock = void, typename T>
   requires(std::is_class_v<T> && (std::is_void_v<Mock> || std::is_class_v<Mock>))
 auto to_xml(const T& value, bool first = true, const std::string& fixed_name = "") -> std::string;
 ```
 
-As you can see, there are some parameters for configuration"
-- `value` -- the instance of the class to serialize
-- `first` -- a bool indicating whether to insert the XML header defining the file as XML. `true` means yes
-- `fixed_name` -- a custom name to specify for the instance being serialized. Overrides `name` annotation.
+| Parameter | Default | Purpose |
+| --- | --- | --- |
+| `value` | Required | The class instance to serialize. |
+| `first` | `true` | Include the XML declaration. Pass `false` for an XML fragment. |
+| `fixed_name` | `""` | Override the root name, including any `name` annotation. |
 
 ### Mocking classes
 
@@ -387,7 +258,16 @@ std::println("{}", serial_xml::to_xml<mock_vector>(values, false));
 // <vector size="3"/>
 ```
 
-The mock lists the fields and const getters to serialize, in output order, and supplies their XML annotations. Member identifiers must match accessible members of the actual class. Field placeholders match fields; getter placeholders match non-static const getters callable without arguments (including getters with default arguments). Mock methods need no implementation, and the mock is never constructed. Serialization reads values from the actual object, using its member types for formatting, iteration, and nested serialization. Target member annotations are replaced by the mock's annotations; nested objects use their own annotations normally.
+The mock lists the fields and const getters to serialize, in output order, and
+supplies their XML annotations. Member identifiers must match accessible members
+of the actual class. Field placeholders match fields; getter placeholders match
+non-static const getters callable without arguments, including getters with
+default arguments.
+
+Mock methods need no implementation, and the mock is never constructed.
+Serialization reads values from the actual object, using its member types for
+formatting, iteration, and nested serialization. The mock's annotations replace
+the target member's annotations; nested objects use their own annotations normally.
 
 The root name defaults to the actual type's identifier. A `name` annotation on the
 mock overrides it, and `fixed_name` overrides both. Members marked `skip` need not
@@ -395,17 +275,9 @@ exist on the target. Missing members, incompatible field/getter kinds, and
 ambiguous callable const overloads produce compile-time errors. Mapping covers
 direct accessible members; inherited members are not included.
 
-The identifier map is built once per concrete target type, such as
-`std::vector<int>`, during constant evaluation. It uses an open-addressed hash
-table with at most 50% occupancy and expected O(1) member lookup after hashing the
-identifier. Hash collisions are resolved by probing and comparing identifiers;
-worst-case lookup is O(N). This avoids a target-member template expansion or a
-linear scan of all target members for every mock member. No map or name lookup
-runs during serialization. Calling `to_xml(value)` still serializes normally.
-
 See [the mocking example](examples/mocking.cpp).
 
-### The `prettify` function
+### Pretty printing
 
 `serial_xml::prettify(xml)` validates the input and returns XML with two-space
 indentation for element-only content. Subtrees containing direct text (including
@@ -416,6 +288,161 @@ comments, and processing instructions. Malformed input throws `deserialization_e
 Indentation adds whitespace between elements. Use compact `to_xml` output for
 round trips involving raw scalar fields alongside child elements, or when every
 whitespace node matters.
+
+## Deserialization
+
+`serial_xml::from_xml<T>(xml)` constructs a value-initialized `T` and reconstructs it
+using the same member names, attributes, nesting, iteration, escaping, and mock
+annotations as `to_xml`. `serial_xml::from_xml<T, Schema>(xml)` uses an external mock
+schema. Both accept an optional root-name override as their second argument.
+
+For an existing object, including one without a default constructor, use
+`serial_xml::from_xml<Schema>(object, xml, fixed_name)`; omit `Schema` for the object's
+own annotations. The in-place form snapshots the input so XML stored in an updated
+field remains safe, and parses it before updating the object. A later conversion
+error or throwing setter can leave earlier members updated.
+
+```cpp
+struct Person {
+  [[= serial_xml::attribute]] int age;
+  std::string name;
+  [[= serial_xml::optional]] std::string nickname = "unknown";
+};
+
+auto person = serial_xml::from_xml<Person>(
+  "<Person age='21'><name>Ekansh</name></Person>");
+// person.nickname remains "unknown".
+```
+
+### Missing members and empty values
+
+Members are **required** unless marked `[[=serial_xml::optional]]`, skipped, or
+omitted naturally by serialization. Here's what happens when a member is absent:
+
+| Member | Result when absent |
+| --- | --- |
+| Regular required member | Throws `deserialization_error`. |
+| Explicitly `optional` member or setter | Keeps its initializer, or its current value with the in-place API. |
+| `std::optional<T>` without an explicit `optional` annotation | Resets to `std::nullopt`. |
+| Automatically iterated `exclude_on_empty` member without an explicit `optional` annotation | Resets to an empty value. |
+| Skipped field or unselected mock field | Keeps its initialized value, or its current value with the in-place API. |
+
+An empty element counts as present: it produces an empty string or range but
+fails numeric conversion. Fixed arrays require the exact number of elements.
+Raw ranges may have no elements because their enclosing tag is omitted.
+
+Unknown attributes and child elements are ignored. Duplicate matched singleton
+elements and duplicate XML attributes are rejected. XML child and attribute order
+is otherwise independent of C++ member order.
+
+### Leaf conversion with `from_string`
+
+Every non-unpacked leaf is converted through
+`serial_xml::from_string<T>(std::string_view)`. Built-in implementations cover
+arithmetic types (including booleans), `std::string`, `std::optional`, pairs,
+tuples, and owning STL sequences, sets, and maps. Numbers must consume the entire
+input after trimming surrounding XML whitespace; overflow and invalid text throw
+`deserialization_error`. Booleans accept `true`, `false`, `1`, and `0`; characters
+use their numeric value, matching `to_xml`. Strings retain whitespace.
+
+Container conversion reads the standard formatted representations, such as
+`[1, 2]`, `(1, "text")`, and `{"key": 3}`, including nested containers and quoted
+strings. XML iteration handles `vector`, `array`, `inplace_vector`, `deque`,
+`forward_list`, and `valarray` automatically. Use `iter` for other owning ranges.
+Borrowed views (`span`, `string_view`, pointers) have no built-in reconstruction:
+provide an implementation with an appropriate storage lifetime if you need them.
+
+A custom leaf type requires an explicit specialization, declared before the first
+call that needs it. An unpacked class uses reflection instead.
+
+```cpp
+struct Code {
+  int value;
+};
+
+template <>
+Code serial_xml::from_string<Code>(std::string_view text) {
+  return {serial_xml::from_string<int>(text)};
+}
+```
+
+`format` continues to determine whether a value is represented as text.
+Deserialization passes that text to `from_string`; it does not try to invert
+custom formatter functions or lossy format strings. Decimal zero padding works
+with the default numeric parser. Custom prefixes, hexadecimal representations,
+alignment fill, or other representations need a matching `from_string`
+implementation. Lost precision cannot be recovered.
+
+### Setters and encapsulation
+
+Accessible const getters can be reconstructed through a matching non-static setter
+with exactly one parameter of the same value type (references and cv qualifiers
+are ignored). Supported conventions are `value()` → `value(T)` or `set_value(T)`,
+`get_value()` → `set_value(T)`, and `getValue()` → `setValue(T)`. XML naming and
+annotations come from the getter. Getters without a matching setter are ignored
+by deserialization. Non-function members that cannot be assigned produce a
+compile-time error; mark them `skip` to omit them.
+
+Use `[[= serial_xml::setter]]` to select a method independently, without requiring
+a getter. It must be an accessible non-static method with one parameter. Its
+parameter type controls reconstruction, and its own annotations control XML
+naming, attributes, optionality, and iteration. By default `set_value` reads
+`value` and `setValue` reads `value`; other method names are used literally.
+`name` overrides this. Setters are ignored by `to_xml`.
+
+```cpp
+class Account {
+ public:
+  [[= serial_xml::skip]] int balance() const { return balance_; }
+  [[= serial_xml::setter, = serial_xml::name{"balance"}]]
+  void deposit_balance(int amount) { balance_ = amount; }
+
+ private:
+  int balance_ = 0;
+};
+```
+
+An explicitly selected setter takes precedence over automatic reconstruction of
+its matching getter, so it is invoked once. Setter annotations can also live on
+a mock schema; placeholder methods do not need definitions. Ambiguous setter
+overloads are diagnosed at compile time.
+
+### Supported XML input
+
+The reader supports UTF-8 XML 1.0, a UTF-8 BOM, XML declarations, quoted attributes,
+self-closing elements, comments, processing instructions, CDATA, the five predefined
+entities, and decimal/hexadecimal Unicode character references. It rejects
+mismatched tags, invalid characters/UTF-8, unclosed structures, invalid numeric
+values, missing required members, and multiple roots. DTDs and external entities
+are unsupported. Namespace prefixes are matched literally; namespace declarations
+are not resolved. Nesting is limited to 256 elements. Line endings and literal
+attribute whitespace follow XML normalization rules.
+
+### Raw text, CDATA, and escaping
+
+`raw` scalar fields read the parent's direct text; more than one raw scalar field
+cannot be separated and causes an error. `raw` ranges read matching item tags
+directly from the parent. Unpacked objects and automatically handled optionals
+keep their tagged representation even with `raw`, following `to_xml` precedence.
+
+CDATA fields read the parent's CDATA sections in member order, matching `to_xml`'s
+unwrapped CDATA output. The writer splits `]]>` across CDATA sections and emits carriage returns as
+character references; the reader rejoins those canonical continuations. Adjacent
+fields whose boundaries look exactly like a canonical split (a field ending in
+`]]` followed by one starting in `>`) and optional or externally split CDATA fields
+can be ambiguous; use tagged string fields when boundaries must be
+unambiguous. Standard tagged string fields can contain mixed ordinary text and
+CDATA sections, which are concatenated.
+
+Serialization rejects forbidden XML 1.0 characters and malformed UTF-8 with
+`std::invalid_argument`, including custom formatter output. Carriage returns in
+text and tabs/newlines/carriage returns in attributes use character references to
+preserve their values. Annotation names must be valid XML 1.0 names at compile
+time; invalid runtime root overrides throw `std::invalid_argument`. Unicode,
+underscores, and literal namespace prefixes are accepted.
+
+See [the deserialization example](examples/deserialization.cpp) for round trips,
+custom string conversion, optional fields, and independent setters.
 
 ## Examples
 
@@ -429,7 +456,7 @@ cmake --build --preset build-release
 ./build/release/examples/hello_world
 ```
 
-Set `-D BUILD_EXAMPLES=OFF` when configuring CMake to omit them from your build.
+Set `-DBUILD_EXAMPLES=OFF` when configuring CMake to omit them from your build.
 
 | Example | Demonstrates |
 | ------- | ------------ |
@@ -438,6 +465,7 @@ Set `-D BUILD_EXAMPLES=OFF` when configuring CMake to omit them from your build.
 | [`named_tags.cpp`](examples/named_tags.cpp) | Naming root elements, attributes, and child tags. |
 | [`skip_members.cpp`](examples/skip_members.cpp) | Excluding members from the output. |
 | [`nested_structs.cpp`](examples/nested_structs.cpp) | Recursive serialization of nested structs and nested attributes. |
+| [`mocking.cpp`](examples/mocking.cpp) | External annotations for classes you cannot modify. |
 | [`deserialization.cpp`](examples/deserialization.cpp) | Round trips, custom leaf conversion, optional reconstruction, and setters. |
 | [`stl_containers.cpp`](examples/stl_containers.cpp) | Automatic container iteration, `exclude_on_empty`, and `no_iter`. |
 | [`iteration.cpp`](examples/iteration.cpp) | Custom element and container names for ranges, including ranges of structs. |
@@ -449,8 +477,9 @@ Set `-D BUILD_EXAMPLES=OFF` when configuring CMake to omit them from your build.
 
 ## Contributing
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on the process for submitting pull requests to us.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, testing
+guidelines, and the pull request process.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+SerialXML is licensed under the [MIT License](LICENSE).
