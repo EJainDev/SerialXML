@@ -5,6 +5,11 @@ on:
     branches:
       - main
     paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'cmake/**'
+      - '.devcontainer/**'
+      - 'README.md'
       - 'include/**'
       - '.github/workflows/**'
       - 'tests/**'
@@ -15,6 +20,11 @@ on:
     branches:
       - main
     paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'cmake/**'
+      - '.devcontainer/**'
+      - 'README.md'
       - 'include/**'
       - '.github/workflows/**'
       - 'tests/**'
@@ -34,16 +44,18 @@ jobs:
         with:
           push: never
           runCmd: |
+            set -eu
             cmake --preset release-test-gcc
             cmake --build --preset build-release-test
-            cd build && ctest --output-on-failure --output-junit test-results.xml
+            ctest --test-dir build/release --output-on-failure --no-tests=error --output-junit test-results.xml
+            cmake -DSERIAL_XML_SOURCE_DIR="$PWD" -DSERIAL_XML_BINARY_DIR="$PWD/build/release" -P tests/consumer/run.cmake
       
       - name: Test Report
         if: ${{ !cancelled() }}
         uses: dorny/test-reporter@v3
         with:
           name: C++ Tests
-          path: build/test-results.xml
+          path: build/release/test-results.xml
           reporter: java-junit
           fail-on-error: true
           list-tests: failed

@@ -1541,3 +1541,141 @@ TEST(FromXml, MalformedLateTextDoesNotUpdateInPlaceTarget) {
   EXPECT_EQ(original.first, "original first");
   EXPECT_EQ(original.second, "original second");
 }
+
+TEST(Escaping, PreservesXmlWhitespace) {
+  struct WhitespaceRecord {
+    [[= serial_xml::attribute]] std::string attribute;
+    std::string text;
+    [[= serial_xml::raw]] std::string raw;
+  };
+  const WhitespaceRecord value{"a\t\n\r\r\nb", "a\r\nb\rc", "x\ry"};
+  const auto xml = clean_to_xml(value);
+  EXPECT_EQ(xml,
+            "<WhitespaceRecord attribute=\"a&#9;&#10;&#13;&#13;&#10;b\">"
+            "<text>a&#13;\nb&#13;c</text>x&#13;y</WhitespaceRecord>");
+  auto parsed = serial_xml::from_xml<WhitespaceRecord>(xml);
+  EXPECT_EQ(parsed.attribute, value.attribute);
+  EXPECT_EQ(parsed.text, value.text);
+  EXPECT_EQ(parsed.raw, value.raw);
+}
+
+TEST(Escaping, CdataSplitsTerminatorsAndCarriageReturns) {
+  struct CdataRecord {
+    [[= serial_xml::cdata]] std::string first;
+    [[= serial_xml::cdata]] std::string second;
+  };
+  const CdataRecord value{"a]]>b\r\nc]]>\r", "second"};
+  const auto xml = clean_to_xml(value);
+  EXPECT_EQ(xml,
+            "<CdataRecord><![CDATA[a]]]]><![CDATA[>b]]>&#13;<![CDATA[\nc]]]]>"
+            "<![CDATA[>]]>&#13;<![CDATA[]]><![CDATA[second]]></CdataRecord>");
+  auto parsed = serial_xml::from_xml<CdataRecord>(xml);
+  EXPECT_EQ(parsed.first, value.first);
+  EXPECT_EQ(parsed.second, value.second);
+}
+
+TEST(Escaping, RejectsInvalidCharactersAndUtf8) {
+  struct Text {
+    std::string value;
+  };
+  struct Attribute {
+    [[= serial_xml::attribute]] std::string value;
+  };
+  struct Raw {
+    [[= serial_xml::raw]] std::string value;
+  };
+  struct Cdata {
+    [[= serial_xml::cdata]] std::string value;
+  };
+  for (const auto& invalid : {std::string("a\0b", 3), std::string("\x01"), std::string("\xC0\xAF"),
+                              std::string("\xED\xA0\x80"), std::string("\xF4\x90\x80\x80"),
+                              std::string("\xEF\xBF\xBE"), std::string("\xE2\x82")}) {
+    EXPECT_THROW(clean_to_xml(Text{invalid}), std::invalid_argument);
+    EXPECT_THROW(clean_to_xml(Attribute{invalid}), std::invalid_argument);
+    EXPECT_THROW(clean_to_xml(Raw{invalid}), std::invalid_argument);
+    EXPECT_THROW(clean_to_xml(Cdata{invalid}), std::invalid_argument);
+  }
+  const std::string unicode = "é😀\t\n";
+  EXPECT_EQ(serial_xml::from_xml<Text>(clean_to_xml(Text{unicode})).value, unicode);
+}
+
+TEST(Naming, ValidatesRuntimeRootOverrides) {
+  struct RuntimeRootRecord {
+    int value;
+  };
+  for (const auto& invalid : {"1bad", "bad name", "-bad", ".bad", "bad<", "\xC0\xAF"}) {
+    EXPECT_THROW(serial_xml::to_xml(RuntimeRootRecord{}, false, invalid), std::invalid_argument);
+    EXPECT_THROW(serial_xml::from_xml<RuntimeRootRecord>(
+                     "<RuntimeRootRecord><value>0</value></RuntimeRootRecord>", invalid),
+                 std::invalid_argument);
+  }
+  for (const auto& valid : {"_record", "ns:record", "é", "xml_record", "record-1.0"}) {
+    const auto xml = serial_xml::to_xml(RuntimeRootRecord{7}, false, valid);
+    EXPECT_EQ(serial_xml::from_xml<RuntimeRootRecord>(xml, valid).value, 7);
+  }
+}
+
+TEST(Naming, SupportsUnicodeAndPrefixedAnnotations) {
+  struct[[= serial_xml::name{"ns:记录"}]] UnicodeNameRecord {
+    [[ = serial_xml::attribute, = serial_xml::name{"_é"} ]] int value;
+    [[= serial_xml::iter{"子", "ns:items"}]] std::vector<int> items;
+  };
+  const auto xml = clean_to_xml(UnicodeNameRecord{3, {4}});
+  EXPECT_EQ(xml, "<ns:记录 _é=\"3\"><ns:items><子>4</子></ns:items></ns:记录>");
+  EXPECT_EQ(serial_xml::from_xml<UnicodeNameRecord>(xml).items, std::vector<int>{4});
+}
+
+TEST(Prettify, PreservesTextAndMixedContent) {
+  for (const std::string xml :
+       {"<root>hello</root>", "<root>  hello\n </root>", "<root>a<child/>b</root>",
+        "<root><![CDATA[a<b>]]></root>", "<root xml:space='preserve'><child/></root>"})
+    EXPECT_EQ(serial_xml::prettify(xml), xml);
+  EXPECT_EQ(serial_xml::prettify("<root><text>hello</text><empty/></root>"),
+            "<root>\n  <text>hello</text>\n  <empty/>\n</root>");
+  struct PrettyTextRecord {
+    std::string text;
+  };
+  const auto xml = serial_xml::prettify(clean_to_xml(PrettyTextRecord{"hello"}));
+  EXPECT_EQ(serial_xml::from_xml<PrettyTextRecord>(xml).text, "hello");
+  EXPECT_EQ(serial_xml::prettify(xml), xml);
+}
+
+TEST(Prettify, HandlesQuotedMarkupCommentsAndInstructions) {
+  EXPECT_EQ(
+      serial_xml::prettify("<?xml version='1.0'?><root><!-- a > b --><?task a > b?>"
+                           "<child attr='>'>hello</child><other><![CDATA[x>y]]></other></root>"),
+      "<?xml version='1.0'?>\n<root>\n  <!-- a > b -->\n  <?task a > b?>\n"
+      "  <child attr='>'>hello</child>\n  <other><![CDATA[x>y]]></other>\n</root>");
+  EXPECT_THROW(serial_xml::prettify("<root><broken></root>"), serial_xml::deserialization_error);
+}
+
+TEST(Prettify, PreservesUtf8BomBeforeDeclaration) {
+  const std::string xml = "\xEF\xBB\xBF<?xml version='1.0'?><root><text>hello</text></root>";
+  EXPECT_EQ(serial_xml::prettify(xml),
+            "\xEF\xBB\xBF<?xml version='1.0'?>\n<root>\n  <text>hello</text>\n</root>");
+  EXPECT_EQ(serial_xml::prettify("\xEF\xBB\xBF<root>hello</root>"),
+            "\xEF\xBB\xBF<root>hello</root>");
+}
+
+TEST(Escaping, WhitespaceAcrossSimdAndMaskBoundaries) {
+  struct BoundaryWhitespace {
+    [[= serial_xml::attribute]] std::string value;
+  };
+  for (std::size_t length : {15, 16, 31, 32, 63, 64, 65, 127, 128}) {
+    std::string value(length, 'a');
+    value += "\t\n\r";
+    const auto xml = clean_to_xml(BoundaryWhitespace{value});
+    EXPECT_EQ(xml,
+              "<BoundaryWhitespace value=\"" + std::string(length, 'a') + "&#9;&#10;&#13;\"/>");
+    EXPECT_EQ(serial_xml::from_xml<BoundaryWhitespace>(xml).value, value);
+  }
+}
+
+std::string invalid_xml_formatter(const std::string&) { return std::string(1, '\x01'); }
+
+TEST(Escaping, ValidatesCustomFormatterOutput) {
+  struct InvalidFormattedText {
+    [[= serial_xml::format{invalid_xml_formatter}]] std::string value;
+  };
+  EXPECT_THROW(clean_to_xml(InvalidFormattedText{"valid"}), std::invalid_argument);
+}
