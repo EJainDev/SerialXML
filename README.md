@@ -20,6 +20,10 @@ XML, missing required members, and invalid values through
 
 **Requires GCC 16.1+, CMake 4.3.3+, and Ninja.** The dev container provides a matching environment.
 
+The full documentation website lives in [`docs/`](docs/), with guides, examples,
+and an indexed API reference. See [Building the documentation](docs/building-docs.md)
+for local previews and Read the Docs setup.
+
 ## Table of Contents
 
 - [Benchmarks](#benchmarks)

@@ -1,0 +1,221 @@
+/* Extend Furo with the README banner's blue, cyan, and navy palette and task navigation. */
+body {
+  --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-stack--monospace: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+article h1 { font-size: 2rem; line-height: 1.25; letter-spacing: -0.025em; }
+article h2 { letter-spacing: -0.02em; }
+/* Shift subheadings down one step in Furo's type scale. */
+article h2 { font-size: 1.4rem; }
+article h3 { font-size: 1.15rem; }
+article h4 { font-size: 1.125em; }
+article h5 { font-size: 1em; }
+article h6 { font-size: .875em; }
+.serialxml-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid var(--color-background-border);
+  margin-bottom: 1.2rem;
+}
+.serialxml-badges { display: flex; flex-wrap: wrap; gap: .55rem; margin: 1.25rem 0; }
+.serialxml-badges span {
+  color: var(--color-brand-content);
+  border: 1px solid var(--color-background-border);
+  background: var(--color-sidebar-background);
+  border-radius: 999px;
+  padding: .3rem .7rem;
+  font-size: .8rem;
+  font-weight: 600;
+}
+.highlight { border-radius: 6px; background: var(--color-background-secondary); }
+.highlight pre { background: transparent; line-height: 1.6; }
+article { line-height: 1.65; }
+article a, article a:visited {
+  color: var(--color-brand-content);
+  text-decoration: none;
+  border-bottom: 0;
+}
+article a:hover, article a:focus-visible {
+  color: var(--color-brand-content);
+  text-decoration: underline solid;
+  text-decoration-thickness: 1px;
+  text-underline-offset: .2em;
+}
+article code.literal {
+  border: 0;
+  background: var(--color-background-secondary);
+  padding: .12em .3em;
+  border-radius: 3px;
+}
+.code-block-caption {
+  background: var(--color-background-secondary);
+  border: 0;
+  padding: .65rem 1rem;
+  font-size: .8rem;
+  color: var(--color-foreground-secondary);
+}
+table.docutils { width: 100%; }
+.api-search {
+  border: 1px solid var(--color-background-border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 1.5rem 0;
+}
+.api-search label { display: block; font-weight: 600; margin-bottom: .5rem; }
+.api-search input {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  color: var(--color-foreground-primary);
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-background-border);
+  border-radius: 4px;
+  padding: .6rem;
+}
+.api-search button {
+  font: inherit;
+  color: var(--color-brand-content);
+  background: var(--color-sidebar-background);
+  border: 1px solid var(--color-background-border);
+  border-radius: 4px;
+  padding: .4rem .8rem;
+  margin-top: .5rem;
+  cursor: pointer;
+}
+.api-search input:focus-visible, .api-search button:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+#api-search-status { font-size: .875rem; margin-bottom: 0; }
+#api-search-results { max-height: 18rem; overflow-y: auto; padding-left: 1.25rem; }
+#api-search-results a { overflow-wrap: anywhere; }
+article .sig[id], article section[id] { scroll-margin-top: 4rem; }
+@media (max-width: 640px) {
+  .serialxml-badges { gap: .35rem; }
+}
+
+/* Section switching and location context remain available without JavaScript. */
+.section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  padding: .2rem 0 1rem;
+  margin: 0 0 1.25rem;
+  border-bottom: 1px solid var(--color-background-border);
+  clear: both;
+}
+.section-nav a {
+  font-size: .82rem;
+  font-weight: 500;
+  padding: .45rem .65rem;
+  border-radius: 0;
+  color: var(--color-foreground-secondary);
+  text-decoration: none;
+}
+.section-nav a:hover,
+.section-nav a[aria-current="page"],
+.section-nav a.active-section {
+  background: transparent;
+  color: var(--color-brand-content);
+}
+.section-nav a[aria-current="page"], .section-nav a.active-section {
+  box-shadow: inset 0 -2px var(--color-brand-primary);
+}
+.breadcrumbs { font-size: .75rem; color: var(--color-foreground-secondary); }
+.breadcrumbs a, .breadcrumbs a:visited { color: var(--color-foreground-secondary); }
+.breadcrumbs ol { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+.breadcrumbs li { margin: 0; overflow-wrap: anywhere; }
+.breadcrumbs li + li::before { content: "/"; margin-right: .4rem; opacity: .6; }
+.hero-kicker {
+  margin-top: 1.5rem;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-weight: 700;
+  color: var(--color-brand-content);
+}
+.hero-kicker + section > h2 { font-size: 2.25rem; line-height: 1.15; margin-top: .75rem; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin: 1.5rem 0; }
+.hero-actions a { padding: .65rem 1rem; border-radius: 5px; font-weight: 600; text-decoration: none; }
+.hero-actions .primary-action { color: #fff; background: #245fd1; }
+.hero-actions .primary-action:hover { background: #1d51b8; }
+.hero-actions .secondary-action { color: var(--color-brand-content); border: 1px solid var(--color-background-border); }
+.doc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0 2rem; }
+a.doc-card {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  padding: 1.25rem;
+  border: 1px solid var(--color-background-border);
+  border-radius: 6px;
+  background: var(--color-background-secondary);
+  color: var(--color-foreground-primary);
+  text-decoration: none;
+  font-size: .9rem;
+  line-height: 1.55;
+}
+a.doc-card:hover { border-color: var(--color-brand-primary); }
+.doc-card strong { font-size: 1.25rem; letter-spacing: -.02em; }
+.card-kind { font-size: .7rem; text-transform: uppercase; letter-spacing: .09em; color: var(--color-foreground-secondary); font-weight: 700; }
+.card-link { color: var(--color-brand-content); font-weight: 600; margin-top: auto; padding-top: .5rem; }
+article a:focus-visible { outline: 3px solid var(--color-brand-primary); outline-offset: 3px; border-radius: 3px; }
+.sidebar-tree .reference { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .doc-grid { grid-template-columns: 1fr; }
+  .section-nav { gap: .2rem; }
+  .section-nav a { padding: .5rem; }
+  .hero-kicker + section > h2 { font-size: 1.8rem; }
+}
+
+/* Navigation uses color and the active rule rather than decorative underlines. */
+article .section-nav a:hover, article .breadcrumbs a:hover {
+  text-decoration: none;
+  color: var(--color-brand-content);
+}
+article .hero-actions a:hover, article a.doc-card:hover { text-decoration: none; }
+article .hero-actions .primary-action,
+article .hero-actions .primary-action:visited,
+article .hero-actions .primary-action:hover { color: #fff; }
+article a.doc-card, article a.doc-card:visited { color: var(--color-foreground-primary); }
+@media (max-width: 640px) {
+  article h1 { font-size: 1.75rem; }
+}
+
+/* A visible starting point and an ordered learning path for tutorials. */
+.tutorial-start {
+  padding: 1.25rem 1.5rem;
+  margin: 1.5rem 0 2rem;
+  border-left: 3px solid var(--color-brand-primary);
+  background: var(--color-background-secondary);
+  border-radius: 0 6px 6px 0;
+}
+.tutorial-start p { margin: 0 0 .75rem; }
+.tutorial-start-link { font-weight: 600; }
+.tutorial-path { list-style: none; padding: 0; margin: 1.5rem 0 2rem; }
+.tutorial-path li { margin: 0; border-top: 1px solid var(--color-background-border); }
+.tutorial-path li:last-child { border-bottom: 1px solid var(--color-background-border); }
+article .tutorial-path a {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1.25rem .75rem;
+  color: var(--color-foreground-primary);
+}
+article .tutorial-path a:visited { color: var(--color-foreground-primary); }
+article .tutorial-path a:hover {
+  text-decoration: none;
+  background: var(--color-background-secondary);
+}
+.lesson-number { color: var(--color-brand-content); font: 600 .85rem var(--font-stack--monospace); padding-top: .25rem; }
+.lesson-content { display: flex; flex-direction: column; gap: .35rem; flex: 1; min-width: 0; }
+.lesson-content strong { font-size: 1.1rem; }
+.lesson-content > span { font-size: .9rem; }
+.lesson-content .lesson-skills { font-size: .75rem; color: var(--color-foreground-secondary); }
+.lesson-arrow { color: var(--color-brand-content); padding-top: .1rem; }
+@media (max-width: 640px) {
+  .tutorial-start { padding: 1rem; }
+  article .tutorial-path a { padding: 1rem .25rem; gap: .75rem; }
+}
