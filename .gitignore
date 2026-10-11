@@ -1,9 +1,11 @@
 .*
 build/
+__pycache__/
 
 !.github
 !.devcontainer
 
+!.readthedocs.yaml
 !.gitignore
 !.gitattributes
 !.clang-format

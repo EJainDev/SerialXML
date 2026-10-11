@@ -1,0 +1,103 @@
+# Contributing
+
+Thank you for your interest in contributing to SerialXML! All contributions are greatly appreciated. This document outlines the guidelines for contributing to the project.
+
+## Table of Contents
+
+- [Code of Conduct](#code-of-conduct)
+- [Reporting Bugs](#reporting-bugs)
+  - [Compile Errors](#compile-errors)
+  - [Runtime Bugs](#runtime-bugs)
+- [Feature Requests](#feature-requests)
+- [Local Setup Instructions](#local-setup-instructions)
+- [Testing Guidelines](#testing-guidelines)
+- [Style & Commit Rules](#style--commit-rules)
+- [Pull Request Guidelines](#pull-request-guidelines)
+- [Review Process](#review-process)
+
+## Code of Conduct
+
+See [Code of Conduct](https://github.com/EJainDev/SerialXML/blob/main/CODE_OF_CONDUCT.md).
+
+## Reporting Bugs
+
+Before submitting a bug report, ensure the issue hasn't been reported already. Provide clear, concise details to help maintainers reproduce and fix the issue.
+
+### Compile Errors
+
+To report compile errors, specify:
+1. The exact error message or symptom.
+2. The compiler and version (for example, GCC 16.1) and the CMake version used (for example, 4.4.3).
+3. The full compiler output / compilation log.
+4. A minimal, self-contained reproducible example (smallest code that reproduces the problem).
+5. The exact build commands or CMake preset used to reproduce the issue (for example: `cmake --preset debug-test-gcc` and `cmake --build --preset build-debug-test`).
+
+### Runtime Bugs
+
+To report runtime bugs, specify:
+1. What happened.
+2. What should have happened.
+3. A minimal reproducing example.
+4. Why it could have happened (optional).
+5. Steps to reproduce the behavior (exact commands, inputs, and any environment information required to trigger the issue).
+
+## Feature Requests
+
+Feature requests drive the growth of this library. All requests are welcome, even if you cannot implement them yourself. The feature request template includes a "Testing Commitment" checkbox — please select one of the following options to indicate your level of involvement:
+
+- **Test only**: I can help test or validate a PR but will not implement it.
+- **Implement and test (PR)**: I will implement the feature and submit a PR that includes tests.
+- **Neither**: I cannot implement or test this change; this is a request only.
+
+When possible, prefer **Implement and test (PR)** so the change can be reviewed and merged more quickly. Include:
+1. Feature description.
+2. Intent and use case for the feature.
+3. Example usage (optional).
+
+## Local Setup Instructions
+
+1. Clone the repository.
+2. Install GCC 16.1 and CMake 4.3.3 or higher.
+3. Configure the project using the `debug-test-gcc` preset: `cmake --preset debug-test-gcc`
+4. Build the project using the `build-debug-test` preset: `cmake --build --preset build-debug-test`
+
+## Testing Guidelines
+
+- Use Google Test as the testing framework.
+- Run the full test suite before submitting changes: `ctest --test-dir build/debug --output-on-failure --no-tests=error`
+- Check both consumer paths after a build: `cmake -DSERIAL_XML_SOURCE_DIR="$PWD" -DSERIAL_XML_BINARY_DIR="$PWD/build/debug" -P tests/consumer/run.cmake`.
+- All tests must pass. Do not break existing functionality.
+- Add new tests for new features.
+- Add regression tests for bug fixes.
+- Verify that changes compile and run correctly across supported platforms.
+
+## Style & Commit Rules
+
+- Format code using `clang-format`. Run `clang-format -i <file>` before committing.
+- Follow general guidelines using `clang-tidy`. If you disable a check (globally or locally), explain the rationale in your PR.
+- Use conventional commit messages: `<type>(<scope>): <description>`
+  - `feat`: New feature
+  - `fix`: Bug fix
+  - `docs`: Documentation changes
+  - `style`: Code style changes (formatting, semicolons, etc.)
+  - `refactor`: Code refactoring
+  - `test`: Adding or modifying tests
+  - `chore`: Maintenance tasks
+
+## Pull Request Guidelines
+
+- Create a separate branch for each feature or fix.
+- Keep PRs focused. One PR per feature/fix.
+- Update documentation if API or behavior changes.
+- Link related issues in the PR description.
+- Ensure all tests pass locally before requesting a review.
+
+## Review Process
+
+1. **Local Verification:** Ensure all tests pass and code is formatted correctly.
+2. **Maintainer Review:** Maintainers will evaluate functionality, code quality, and alignment with project goals.
+3. **Feedback Loop:** Address review comments promptly. Push updates to the same branch.
+4. **Merge:** Once approved, a maintainer will squash and merge the PR.
+5. **Release:** Changes will be included in the next scheduled release or hotfix.
+
+Thank you for helping improve SerialXML!

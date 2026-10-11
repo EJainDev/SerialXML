@@ -1,0 +1,20 @@
+{% extends "!page.html" %}
+{% block content %}
+<nav class="section-nav" aria-label="Documentation sections">
+  {% for doc, label in [("tutorials/index", "Tutorials"), ("how-to/index", "How-to guides"), ("reference/index", "Reference"), ("explanation/index", "Explanation")] %}
+  <a href="{{ pathto(doc) }}"{% if pagename == doc %} aria-current="page"{% elif parents | selectattr("link", "equalto", pathto(doc)) | list %} class="active-section"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% if pagename != "index" %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+  <ol>
+    <li><a href="{{ pathto('index') }}">Home</a></li>
+    {% for parent in parents if parent.link != pathto('index') %}
+    <li><a href="{{ parent.link }}">{{ parent.title }}</a></li>
+    {% endfor %}
+    <li aria-current="page">{{ title | striptags }}</li>
+  </ol>
+</nav>
+{% endif %}
+{{ super() }}
+{% endblock %}
