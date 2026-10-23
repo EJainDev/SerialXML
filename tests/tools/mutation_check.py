@@ -44,6 +44,11 @@ def main():
     build = output / "build"
     source.mkdir(exist_ok=True)
     tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).split(b"\0")
+    # Include newly authored source tests too, without copying unrelated
+    # untracked build trees from the checkout.
+    tracked += subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z", "--",
+         "tests", "include", "cmake", "examples"], cwd=root).split(b"\0")
     for entry in tracked:
         if not entry:
             continue

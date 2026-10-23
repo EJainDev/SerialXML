@@ -177,6 +177,91 @@ std::vector<named_case<std::string>> malformed_xml_cases() {
           std::string("<MalformedInputRecord a='1'b='2'><value>1</value></MalformedInputRecord>"))};
 }
 
+// Deliberately independent of the library's decoder; encode numeric Unicode
+// scalars for exhaustive character-domain and XML Name boundary tests.
+std::string utf8_scalar(unsigned value) {
+  std::string result;
+  if (value <= 0x7f)
+    result += static_cast<char>(value);
+  else if (value <= 0x7ff) {
+    result += static_cast<char>(0xc0 | (value >> 6));
+    result += static_cast<char>(0x80 | (value & 63));
+  } else if (value <= 0xffff) {
+    result += static_cast<char>(0xe0 | (value >> 12));
+    result += static_cast<char>(0x80 | ((value >> 6) & 63));
+    result += static_cast<char>(0x80 | (value & 63));
+  } else {
+    result += static_cast<char>(0xf0 | (value >> 18));
+    result += static_cast<char>(0x80 | ((value >> 12) & 63));
+    result += static_cast<char>(0x80 | ((value >> 6) & 63));
+    result += static_cast<char>(0x80 | (value & 63));
+  }
+  return result;
+}
+
+std::vector<named_case<std::string, std::string>> xml_diagnostic_cases() {
+  auto row = [](const char* name, const char* xml, const char* diagnostic) {
+    return case_of(name, std::string(xml), std::string(diagnostic));
+  };
+  return {
+      row("invalid_root_name", "<1r/>", "Invalid XML name"),
+      row("attribute_missing_equals", "<r a/>", "Expected ="),
+      row("attribute_unquoted", "<r a=1/>", "Expected quoted attribute"),
+      row("attribute_unterminated", "<r a='", "Unterminated attribute"),
+      row("attribute_adjacent", "<r a='1'b='2'/>", "Missing whitespace before attribute"),
+      row("attribute_duplicate", "<r a='1' a='2'/>", "Duplicate attribute"),
+      row("attribute_raw_markup", "<r a='<'>", "Unescaped '<' in attribute"),
+      row("entity_unterminated", "<r><value>&amp</value></r>", "Unterminated entity reference"),
+      row("entity_empty_decimal", "<r><value>&#;</value></r>", "Invalid character reference"),
+      row("entity_empty_hex", "<r><value>&#x;</value></r>", "Invalid character reference"),
+      row("entity_non_hex", "<r><value>&#xG;</value></r>", "Invalid character reference"),
+      row("entity_integer_overflow", "<r><value>&#4294967296;</value></r>",
+          "Invalid character reference"),
+      row("entity_above_unicode", "<r><value>&#x110000;</value></r>",
+          "Invalid XML character reference"),
+      row("entity_noncharacter", "<r><value>&#xFFFF;</value></r>",
+          "Invalid XML character reference"),
+      row("entity_negative", "<r><value>&#-1;</value></r>", "Invalid character reference"),
+      row("entity_unknown", "<r><value>&external;</value></r>", "Unknown entity reference"),
+      row("text_unterminated", "<r><value>text", "Unterminated element text"),
+      row("element_unterminated", "<r>", "Unterminated element"),
+      row("closing_tag_wrong", "<r><value/></wrong>", "Mismatched closing tag"),
+      row("closing_tag_extra_suffix", "<r><value/></root>", "Expected >"),
+      row("nested_scalar", "<r><value><inner/></value></r>", "Unexpected nested element"),
+      row("duplicate_member", "<r><value/><value/></r>", "Duplicate element"),
+      row("cdata_unterminated", "<r><value><![CDATA[text</value></r>", "Unterminated CDATA"),
+      row("cdata_split_unterminated", "<r><value><![CDATA[]]]]><![CDATA[>", "Unterminated CDATA"),
+      row("cdata_cr_split_unterminated", "<r><value><![CDATA[a]]>&#13;<![CDATA[",
+          "Unterminated CDATA"),
+      row("cdata_terminator_in_text", "<r><value>]]></value></r>", "Unescaped CDATA terminator"),
+      row("comment_unterminated", "<r><!--x", "Malformed XML comment"),
+      row("comment_double_hyphen", "<r><!--x--y--></r>", "Malformed XML comment"),
+      row("nested_dtd", "<r><!DOCTYPE r></r>", "DTD and markup declarations are unsupported"),
+      row("nested_entity_declaration", "<r><!ENTITY x 'value'></r>",
+          "DTD and markup declarations are unsupported"),
+      row("pi_reserved_target", "<r><?XmL?></r>", "Reserved processing instruction target"),
+      row("pi_unterminated", "<r><?task ", "Unterminated processing instruction"),
+      row("pi_missing_separator", "<r><?task!?></r>", "Invalid processing instruction"),
+      row("pi_invalid_utf8", "<r><?task \xC0\x80?></r>", "Invalid UTF-8"),
+      row("comment_invalid_utf8", "<r><!--\xC0\x80--></r>", "Invalid UTF-8"),
+      row("declaration_unquoted", "<?xml version=1.0?><r/>",
+          "Expected quoted XML declaration value"),
+      row("declaration_unterminated", "<?xml version='1.0", "Unterminated XML declaration"),
+      row("declaration_missing_space", "<?xml version='1.0'encoding='UTF-8'?><r/>",
+          "Missing whitespace in XML declaration"),
+      row("declaration_wrong_order", "<?xml encoding='UTF-8' version='1.0'?><r/>",
+          "XML declaration requires version 1.0"),
+      row("declaration_extra_attribute", "<?xml version='1.0' extra='x'?><r/>",
+          "Invalid XML declaration attributes"),
+      row("declaration_invalid_standalone", "<?xml version='1.0' standalone='YES'?><r/>",
+          "Invalid standalone declaration"),
+      row("declaration_late", "<r><?xml version='1.0'?></r>",
+          "Reserved processing instruction target"),
+      row("trailing_text", "<r><value/></r>tail", "Trailing content after root element"),
+      row("trailing_second_root", "<r><value/></r><r/>", "Trailing content after root element"),
+  };
+}
+
 struct NamingTests {
   [[= test{}]] void empty_with_name() {
     struct[[= serial_xml::name{"MyStruct"}]] EmptyName {};
@@ -224,6 +309,56 @@ struct NamingTests {
     AllNamed obj{4, 5};
 
     assert_equal("<MyStruct MyAttribute=\"4\"><MyChild>5</MyChild></MyStruct>", clean_to_xml(obj));
+  }
+
+  [[= test{}]] void xml_name_range_endpoints() {
+    struct NameInput {
+      int value;
+    };
+    const std::array<std::pair<unsigned, unsigned>, 16> start_ranges{{{':', ':'},
+                                                                      {'A', 'Z'},
+                                                                      {'_', '_'},
+                                                                      {'a', 'z'},
+                                                                      {0xc0, 0xd6},
+                                                                      {0xd8, 0xf6},
+                                                                      {0xf8, 0x2ff},
+                                                                      {0x370, 0x37d},
+                                                                      {0x37f, 0x1fff},
+                                                                      {0x200c, 0x200d},
+                                                                      {0x2070, 0x218f},
+                                                                      {0x2c00, 0x2fef},
+                                                                      {0x3001, 0xd7ff},
+                                                                      {0xf900, 0xfdcf},
+                                                                      {0xfdf0, 0xfffd},
+                                                                      {0x10000, 0xeffff}}};
+    auto valid_start = [&](unsigned cp) {
+      for (auto [low, high] : start_ranges)
+        if (cp >= low && cp <= high) {
+          return true;
+        }
+      return false;
+    };
+    for (auto [low, high] : start_ranges) {
+      for (const unsigned cp : {low - 1, low, high, high + 1}) {
+        const auto name = utf8_scalar(cp) + "node";
+        scoped_trace trace(std::format("XML Name start U+{:X}", cp));
+        if (valid_start(cp)) {
+          const auto xml = serial_xml::to_xml(NameInput{7}, false, name);
+          expect_equal(7, serial_xml::from_xml<NameInput>(xml, name).value);
+        } else {
+          expect_throws<std::invalid_argument>(
+              [&] { (void)serial_xml::to_xml(NameInput{7}, false, name); });
+          expect_throws<serial_xml::deserialization_error>(
+              [&] { (void)serial_xml::from_xml<NameInput>("<" + name + "/>", "valid"); });
+        }
+      }
+    }
+    for (const unsigned cp : {0xb7u, 0x300u, 0x36fu, 0x203fu, 0x2040u, unsigned('-'), unsigned('.'),
+                              unsigned('0'), unsigned('9')}) {
+      const auto name = "n" + utf8_scalar(cp);
+      const auto xml = serial_xml::to_xml(NameInput{7}, false, name);
+      expect_equal(7, serial_xml::from_xml<NameInput>(xml, name).value);
+    }
   }
 
   [[= test{}]] void fixed_name() {
@@ -1034,6 +1169,12 @@ struct MockingTests {
   }
 };
 
+template <typename T>
+struct[[= serial_xml::name{"WidthInput"}]] IntegerWidthInput {
+  [[= serial_xml::attribute]] T attribute;
+  T text;
+};
+
 struct FromStringTests {
   [[= test{}]] void primitives_and_strict_validation() {
     expect_equal(-42, serial_xml::from_string<int>(" -42 "));
@@ -1087,6 +1228,70 @@ struct FromStringTests {
     });
   }
 
+  [[= test{}]] void every_standard_integer_width_and_xml_fast_path() {
+    auto increment_decimal = [](std::string text) {
+      for (auto i = text.size(); i > 0; --i) {
+        if (text[i - 1] != '9') {
+          ++text[i - 1];
+          return text;
+        }
+        text[i - 1] = '0';
+      }
+      return "1" + text;
+    };
+    auto check = [&]<typename T>() {
+      using WidthInput = IntegerWidthInput<T>;
+      for (const T expected :
+           {std::numeric_limits<T>::lowest(), T{0}, std::numeric_limits<T>::max()}) {
+        char buffer[32];
+        const auto [end, error] = std::to_chars(buffer, buffer + sizeof(buffer), expected);
+        assert_equal(std::errc{}, error);
+        const std::string text(buffer, end);
+        scoped_trace trace(std::format("integer width {}, signed {}, value {}", sizeof(T),
+                                       std::is_signed_v<T>, text));
+        expect_equal(expected, serial_xml::from_string<T>(text));
+        const auto xml = clean_to_xml(WidthInput{expected, expected});
+        expect_equal(
+            "<WidthInput attribute=\"" + text + "\"><text>" + text + "</text></WidthInput>", xml);
+        const auto parsed = serial_xml::from_xml<WidthInput>(xml);
+        expect_equal(expected, parsed.attribute);
+        expect_equal(expected, parsed.text);
+      }
+      const auto above_max = increment_decimal(std::to_string(std::numeric_limits<T>::max()));
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<T>(above_max); });
+      if constexpr (std::is_signed_v<T>) {
+        auto minimum = std::to_string(std::numeric_limits<T>::min());
+        const auto below_min = "-" + increment_decimal(minimum.substr(1));
+        expect_throws<serial_xml::deserialization_error>(
+            [&] { (void)serial_xml::from_string<T>(below_min); });
+      } else {
+        expect_throws<serial_xml::deserialization_error>(
+            [] { (void)serial_xml::from_string<T>("-0"); });
+      }
+    };
+    check.template operator()<signed char>();
+    check.template operator()<unsigned char>();
+    check.template operator()<short>();
+    check.template operator()<unsigned short>();
+    check.template operator()<int>();
+    check.template operator()<unsigned>();
+    check.template operator()<long>();
+    check.template operator()<unsigned long>();
+    check.template operator()<long long>();
+    check.template operator()<unsigned long long>();
+  }
+
+  [[= test{}]] void invalid_boolean_spellings_and_whitespace() {
+    for (const auto invalid : {"", " ", "TRUE", "False", "2", "-1", "truefalse", "1x"}) {
+      scoped_trace trace(invalid);
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<bool>(invalid); });
+    }
+    expect_true(serial_xml::from_string<bool>(" \ttrue\r\n"));
+    expect_false(serial_xml::from_string<bool>(" \t0\r\n"));
+  }
+
   [[= test{}]] void floating_point_extremes_and_negative_zero() {
     auto check = []<typename T>() {
       for (const T expected :
@@ -1106,6 +1311,7 @@ struct FromStringTests {
     };
     check.template operator()<float>();
     check.template operator()<double>();
+    check.template operator()<long double>();
   }
 
   [[= test{}]] void floating_point_rejects_range_errors_and_malformed_exponents() {
@@ -1174,6 +1380,56 @@ struct FromStringTests {
       expect_throws<serial_xml::deserialization_error>(
           [&] { (void)(serial_xml::from_string<std::vector<int>>(bad)); });
     }
+  }
+
+  [[= test{}]] void every_debug_escape_and_unicode_width() {
+    using Strings = std::vector<std::string>;
+    expect_equal(
+        Strings{"\\", "\"", "'", "\n", "\r", "\t", std::string(1, '\0'), std::string(1, '\x7f'),
+                "é", "€", "😀"},
+        serial_xml::from_string<Strings>(
+            R"(["\\", "\"", "\'", "\n", "\r", "\t", "\u{0}", "\u{7f}", "\u{e9}", "\u{20ac}", "\u{1f600}"])"));
+    for (const std::string input :
+         {R"(["\q"])", R"(["\u0041"])", R"(["\u{xyz}"])", R"(["\u{100000000}"])",
+          R"(["\u{110000}"])", R"(["\u{DFFF}"])", R"(["a"b"])", "[\"trailing\\\"]", "[\"unclosed]",
+          "[[1,2)]", "[1}]"}) {
+      scoped_trace trace(input);
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<Strings>(input); });
+    }
+    for (const auto input : {"['']", "['ab']", "['é']"}) {
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<std::vector<char>>(input); });
+    }
+  }
+
+  [[= test{}]] void empty_nested_and_malformed_associative_representations() {
+    using Map = std::map<std::string, std::vector<int>>;
+    expect_true(serial_xml::from_string<Map>("{}").empty());
+    expect_equal(Map{{"", {}}}, serial_xml::from_string<Map>(R"({"": []})"));
+    expect_equal(Map{{"a,{b}:c", {1, 2}}, {"empty", {}}},
+                 serial_xml::from_string<Map>(R"({"a,{b}:c": [1, 2], "empty": []})"));
+    for (const auto input :
+         {"{missing}", "{\"key\":}", "{\"x\": [1,]}", "{\"x\": [1}", "{\"x\": [1],}"}) {
+      scoped_trace trace(input);
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<Map>(input); });
+    }
+    expect_equal(std::tuple<>{}, serial_xml::from_string<std::tuple<>>("()"));
+    for (const auto input : {"()", "(1)", "(1, 2, 3)"}) {
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<std::tuple<int, int>>(input); });
+    }
+    expect_equal(std::vector<char>{'A', 'B'},
+                 serial_xml::from_string<std::vector<char>>("[65,66]"));
+    expect_equal(Map{{"a\"b\\c", {1}}}, serial_xml::from_string<Map>(R"({"a\"b\\c": [1]})"));
+    using NestedKeys = std::map<std::tuple<int, int>, int>;
+    expect_equal(NestedKeys{{{1, 2}, 3}}, serial_xml::from_string<NestedKeys>("{(1,2): 3}"));
+    expect_true(serial_xml::from_string<std::unordered_map<std::string, int>>("{}").empty());
+    expect_equal(std::unordered_set<int>{1, 2},
+                 serial_xml::from_string<std::unordered_set<int>>("{2,1,2}"));
+    expect_equal(std::multiset<int>{1, 1, 2},
+                 serial_xml::from_string<std::multiset<int>>("{1,2,1}"));
   }
 
   [[= test{}]] void character_ranges_and_malformed_quotes() {
@@ -1662,6 +1918,119 @@ struct FromXmlTests {
         [&] { (void)(serial_xml::from_xml<DeclarationInput>(xml)); });
   }
 
+  [[
+    = test{}, = parameter_source<&xml_diagnostic_cases>{}
+  ]] void malformed_xml_diagnostics(const std::string& xml, const std::string& diagnostic) {
+    struct CorpusInput {
+      std::string value;
+    };
+    try {
+      (void)serial_xml::from_xml<CorpusInput>(xml, "r");
+      fail("Expected XML rejection");
+    } catch (const serial_xml::deserialization_error& error) {
+      expect_true(std::string_view(error.what()).contains(diagnostic), error.what());
+      expect_true(std::string_view(error.what()).contains(" at byte ") ||
+                  diagnostic == "Unexpected nested element" || diagnostic == "Duplicate element");
+    }
+  }
+
+  [[= test{}]] void literal_namespace_names_and_unknown_members() {
+    struct[[= serial_xml::name{"p:r"}]] NamespaceInput {
+      [[= serial_xml::name{"p:value"}]] std::string value;
+    };
+    const auto parsed = serial_xml::from_xml<NamespaceInput>(
+        "<p:r xmlns:p='urn:one' "
+        "ignored='ok'><unused/><p:value>yes</p:value><unknown>text</unknown></p:r>");
+    expect_equal("yes", parsed.value);
+    // Prefixes are matched literally, not resolved through namespace declarations.
+    expect_throws<serial_xml::deserialization_error>([] {
+      (void)serial_xml::from_xml<NamespaceInput>(
+          "<q:r xmlns:q='urn:one'><q:value>yes</q:value></q:r>");
+    });
+  }
+
+  [[= test{}]] void xml_references_at_each_utf8_width_and_legal_endpoint() {
+    struct ReferenceInput {
+      std::string value;
+    };
+    for (const unsigned cp : {9u, 10u, 13u, 32u, 127u, 128u, 0x7ffu, 0x800u, 0xd7ffu, 0xe000u,
+                              0xfffdu, 0x10000u, 0x10ffffu}) {
+      scoped_trace trace(std::format("reference U+{:X}", cp));
+      const auto expected = utf8_scalar(cp);
+      for (const auto reference : {std::format("&#{};", cp), std::format("&#x{:x};", cp)}) {
+        expect_equal(expected,
+                     serial_xml::from_xml<ReferenceInput>("<ReferenceInput><value>" + reference +
+                                                          "</value></ReferenceInput>")
+                         .value);
+      }
+    }
+  }
+
+  [[= test{}]] void every_xml10_character_round_trips() {
+    struct UnicodeDomain {
+      [[= serial_xml::attribute]] std::string attribute;
+      std::string text;
+      [[= serial_xml::raw]] std::string raw;
+      [[= serial_xml::cdata]] std::string cdata;
+    };
+    std::string domain = "\t\n\r";
+    domain.reserve(4400000);
+    for (unsigned cp = 0x20; cp <= 0x10ffff; ++cp) {
+      if ((cp >= 0xd800 && cp <= 0xdfff) || cp == 0xfffe || cp == 0xffff) continue;
+      domain += utf8_scalar(cp);
+    }
+    const auto xml = clean_to_xml(UnicodeDomain{domain, domain, domain, domain});
+    const auto parsed = serial_xml::from_xml<UnicodeDomain>(xml);
+    expect_equal(domain, parsed.attribute);
+    expect_equal(domain, parsed.text);
+    expect_equal(domain, parsed.raw);
+    expect_equal(domain, parsed.cdata);
+    for (unsigned cp = 0; cp <= 0xffff; ++cp) {
+      if (!(cp < 0x20 && cp != 9 && cp != 10 && cp != 13) && !(cp >= 0xd800 && cp <= 0xdfff) &&
+          cp != 0xfffe && cp != 0xffff)
+        continue;
+      const auto invalid = utf8_scalar(cp);
+      scoped_trace trace(std::format("invalid XML character U+{:X}", cp));
+      expect_throws<std::invalid_argument>(
+          [&] { (void)clean_to_xml(UnicodeDomain{invalid, "", "", ""}); });
+      expect_throws<serial_xml::deserialization_error>([&] {
+        (void)serial_xml::from_xml<UnicodeDomain>("<UnicodeDomain attribute=''><text>" + invalid +
+                                                  "</text></UnicodeDomain>");
+      });
+    }
+  }
+
+  [[= test{}]] void optional_raw_range_presence_overrides_defaults() {
+    struct OptionalRawRange {
+      [[ = serial_xml::raw, = serial_xml::optional, = serial_xml::iter{"item"} ]] std::vector<int>
+          values{9};
+    };
+    const auto absent =
+        serial_xml::from_xml<OptionalRawRange>("<OptionalRawRange><other/></OptionalRawRange>");
+    expect_equal(std::vector<int>{9}, absent.values);
+    const auto present = serial_xml::from_xml<OptionalRawRange>(
+        "<OptionalRawRange><other/><item>1</item><other/><item>2</item></OptionalRawRange>");
+    expect_equal(std::vector<int>{1, 2}, present.values);
+  }
+
+  [[= test{}]] void raw_ranges_skip_unrelated_siblings_and_preserve_order() {
+    struct RawRanges {
+      int head;
+      [[ = serial_xml::raw, = serial_xml::iter{"item"} ]] std::vector<int> values;
+      int tail;
+    };
+    const auto parsed = serial_xml::from_xml<RawRanges>(
+        "<RawRanges><head>1</head><unknown/><item>2</item><tail>4</tail><item>3</item></"
+        "RawRanges>");
+    expect_equal(1, parsed.head);
+    expect_equal(std::vector<int>{2, 3}, parsed.values);
+    expect_equal(4, parsed.tail);
+    expect_equal(
+        std::string(
+            "<RawRanges><head>1</head><item>2</item><item>3</item><tail>4</tail></RawRanges>"),
+        clean_to_xml(parsed));
+  }
+
   [[= test{}]] void accepts_exact_depth_limit_and_rejects_the_next_level() {
     struct DepthInput {};
     // Root is depth zero: 255 nested elements are allowed, the 256th is not.
@@ -1823,9 +2192,9 @@ struct FromXmlTests {
     };
     PartialInput value;
     expect_throws<serial_xml::deserialization_error>([&] {
-      serial_xml::from_xml(
-          value,
-          "<PartialInput><first>10</first><second>invalid</second><last>30</last></PartialInput>");
+      serial_xml::from_xml(value,
+                           "<PartialInput><first>10</first><second>invalid</second><last>30</"
+                           "last></PartialInput>");
     });
     expect_equal(10, value.first);
     expect_equal(2, value.second);
@@ -2124,6 +2493,43 @@ struct FromXmlTests {
     }
   }
 
+  [[= test{}]] void independent_threads_keep_escape_state_separate() {
+    struct ThreadInput {
+      [[= serial_xml::attribute]] std::string attribute;
+      std::string text;
+    };
+    std::array<std::exception_ptr, 8> exceptions{};
+    std::array<bool, 8> matches{};
+    {
+      std::vector<std::jthread> workers;
+      for (std::size_t worker = 0; worker < matches.size(); ++worker) {
+        workers.emplace_back([&, worker] {
+          try {
+            matches[worker] = true;
+            for (unsigned iteration = 0; iteration < 128; ++iteration) {
+              const auto value = std::string(worker * 17 + iteration, 'a') + "<&\"'é😀\r\n";
+              const auto xml = clean_to_xml(ThreadInput{value, value});
+              const auto parsed = serial_xml::from_xml<ThreadInput>(xml);
+              if (parsed.attribute != value || parsed.text != value ||
+                  clean_to_xml(parsed) != xml) {
+                matches[worker] = false;
+              }
+            }
+          } catch (...) {
+            exceptions[worker] = std::current_exception();
+          }
+        });
+      }
+    }
+    for (std::size_t worker = 0; worker < matches.size(); ++worker) {
+      scoped_trace trace(std::format("worker {}", worker));
+      assert_no_throw([&] {
+        if (exceptions[worker]) std::rethrow_exception(exceptions[worker]);
+      });
+      expect_true(matches[worker]);
+    }
+  }
+
   [[= test{}]] void seeded_unicode_round_trip_fuzzing() {
     struct FuzzRecord {
       [[= serial_xml::attribute]] std::string attribute;
@@ -2242,6 +2648,18 @@ struct PrettifyTests {
                              "<child attr='>'>hello</child><other><![CDATA[x>y]]></other></root>"));
     expect_throws<serial_xml::deserialization_error>(
         [&] { (void)(serial_xml::prettify("<root><broken></root>")); });
+  }
+
+  [[= test{}]] void preserves_nested_space_and_is_idempotent() {
+    const std::string xml =
+        "<root><keep xml:space='preserve'><a/>  <b/></keep><other><c/></other></root>";
+    const std::string expected =
+        "<root>\n  <keep xml:space='preserve'><a/>  <b/></keep>\n  <other>\n    <c/>\n  "
+        "</other>\n</root>";
+    expect_equal(expected, serial_xml::prettify(xml));
+    expect_equal(expected, serial_xml::prettify(expected));
+    expect_equal(std::string("<?task?>\n<root/>\n<!--end-->"),
+                 serial_xml::prettify("<?task?><root/><!--end-->"));
   }
 
   [[= test{}]] void preserves_utf8_bom_before_declaration() {

@@ -17,6 +17,28 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(annotest)
 endblock()
 
+find_package(Threads REQUIRED)
 add_executable(serial_xml_tests test_serial_xml.cpp)
-target_link_libraries(serial_xml_tests PRIVATE annotest::annotest serial_xml)
+target_link_libraries(serial_xml_tests PRIVATE annotest::annotest serial_xml
+                                               Threads::Threads)
 annotest_discover_tests(serial_xml_tests)
+
+option(SERIAL_XML_TEST_COVERAGE "Instrument the library and tests for gcov" OFF)
+if(SERIAL_XML_TEST_COVERAGE)
+  target_compile_options(serial_xml PRIVATE --coverage -fprofile-update=atomic)
+  target_compile_options(serial_xml_tests PRIVATE --coverage
+                                                  -fprofile-update=atomic)
+  target_link_options(serial_xml_tests PRIVATE --coverage)
+endif()
+
+foreach(case RANGE 1 22)
+  add_executable(invalid_schema_${case} EXCLUDE_FROM_ALL invalid_schema.cpp)
+  target_compile_definitions(invalid_schema_${case}
+                             PRIVATE INVALID_SCHEMA_CASE=${case})
+  target_link_libraries(invalid_schema_${case} PRIVATE serial_xml)
+endforeach()
+add_test(NAME serial_xml_compile_contracts
+         COMMAND ${CMAKE_COMMAND} -DSERIAL_XML_BINARY_DIR=${PROJECT_BINARY_DIR}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/check_invalid_schemas.cmake)
+set_tests_properties(serial_xml_compile_contracts PROPERTIES RUN_SERIAL TRUE
+                                                             TIMEOUT 600)
