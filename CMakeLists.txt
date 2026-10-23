@@ -35,6 +35,10 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 if(BUILD_TESTS)
+  # CMake 4.3 shares the std module across targets; enable reflection there too.
+  if(CMAKE_VERSION VERSION_LESS 4.4)
+    string(APPEND CMAKE_CXX_FLAGS " -freflection")
+  endif()
   include(CTest)
   enable_testing()
 endif()

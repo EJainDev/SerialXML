@@ -642,7 +642,19 @@ auto get_escape_bitmask(std::string_view input, bool attribute = false) -> std::
   static constexpr auto indices = std::make_index_sequence<simd_t::size()>{};
   for (std::size_t offset = 0; offset < input.size(); offset += simd_t::size()) {
     const auto count = std::min(static_cast<std::size_t>(simd_t::size()), input.size() - offset);
-    auto value = std::simd::partial_load<simd_t>(input.data() + offset, count);
+    // Handle the tail explicitly: experimental libstdc++ partial SIMD loads can
+    // drop bytes (for example, the second quote in a four-byte string).
+    if (count < static_cast<std::size_t>(simd_t::size())) {
+      for (std::size_t i = 0; i < count; ++i) {
+        const auto c = input[offset + i];
+        if (c == '<' || c == '>' || c == '&' || c == '"' || c == '\'') {
+          const auto index = offset + i;
+          escape_flags[index / 64] |= std::uint64_t{1} << (index % 64);
+        }
+      }
+      break;
+    }
+    auto value = std::simd::unchecked_load<simd_t>(input.data() + offset, count);
     auto mask = (value == '<') | (value == '>') | (value == '&') | (value == '"') | (value == '\'');
     template for (constexpr auto i : indices) {
       if (i < count && mask[static_cast<int>(i)]) {

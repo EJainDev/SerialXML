@@ -63,7 +63,9 @@ When possible, prefer **Implement and test (PR)** so the change can be reviewed 
 
 ## Testing Guidelines
 
-- Use Google Test as the testing framework.
+- Use [AnnoTest](https://anno-test.readthedocs.io/en/latest/) as the testing framework.
+- Add annotated methods (`[[= test{}]]`) to the suites in `tests/test_serial_xml.cpp`; use `assert_*` for prerequisites and `expect_*` for independent checks.
+- Run selected cases with `./build/debug/tests/serial_xml_tests --filter 'FromXmlTests.*'` or list them with `--list`.
 - Run the full test suite before submitting changes: `ctest --test-dir build/debug --output-on-failure --no-tests=error`
 - Check both consumer paths after a build: `cmake -DSERIAL_XML_SOURCE_DIR="$PWD" -DSERIAL_XML_BINARY_DIR="$PWD/build/debug" -P tests/consumer/run.cmake`.
 - All tests must pass. Do not break existing functionality.

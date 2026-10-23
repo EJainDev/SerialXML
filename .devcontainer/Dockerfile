@@ -14,7 +14,6 @@ RUN apt-get update && \
     ninja-build \
     libboost-serialization-dev \
     libcereal-dev \
-    libgtest-dev \
     && \
     wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
     | gpg --dearmor -o /etc/apt/trusted.gpg.d/apt.llvm.org.gpg && \
