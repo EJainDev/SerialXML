@@ -1087,6 +1087,63 @@ struct FromStringTests {
     });
   }
 
+  [[= test{}]] void floating_point_extremes_and_negative_zero() {
+    auto check = []<typename T>() {
+      for (const T expected :
+           {std::numeric_limits<T>::lowest(), std::numeric_limits<T>::max(),
+            std::numeric_limits<T>::min(), std::numeric_limits<T>::denorm_min()}) {
+        char buffer[128];
+        const auto [end, error] = std::to_chars(buffer, buffer + sizeof(buffer), expected);
+        assert_equal(std::errc{}, error);
+        const std::string text(buffer, end);
+        scoped_trace trace(text);
+        expect_equal(expected, serial_xml::from_string<T>(text));
+      }
+      const auto negative_zero = serial_xml::from_string<T>("-0.0e0");
+      expect_equal(T{0}, negative_zero);
+      expect_true(std::signbit(negative_zero));
+      expect_false(std::signbit(serial_xml::from_string<T>("0.0")));
+    };
+    check.template operator()<float>();
+    check.template operator()<double>();
+  }
+
+  [[= test{}]] void floating_point_rejects_range_errors_and_malformed_exponents() {
+    for (const std::string input :
+         {"1e99999", "-1e99999", "1e-99999", "-1e-99999", "1e", "1e+", "1e-", "1e2tail", "1.2.3",
+          ".", "+1.0", "--1.0", "nan trailing", "infinity trailing"}) {
+      scoped_trace trace(input);
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<float>(input); });
+      expect_throws<serial_xml::deserialization_error>(
+          [&] { (void)serial_xml::from_string<double>(input); });
+    }
+    // Values outside float's range remain representable as doubles.
+    expect_throws<serial_xml::deserialization_error>(
+        [] { (void)serial_xml::from_string<float>("1e39"); });
+    expect_true(std::isfinite(serial_xml::from_string<double>("1e39")));
+    expect_throws<serial_xml::deserialization_error>(
+        [] { (void)serial_xml::from_string<float>("1e-50"); });
+    expect_true(serial_xml::from_string<double>("1e-50") > 0);
+  }
+
+  [[= test{}]] void floating_point_nonfinite_values_follow_from_chars() {
+    for (const auto input : {"nan", "NaN", "nan(payload)", "-nan"}) {
+      scoped_trace trace(input);
+      expect_true(std::isnan(serial_xml::from_string<float>(input)));
+      expect_true(std::isnan(serial_xml::from_string<double>(input)));
+    }
+    for (const auto input : {"inf", "infinity", "INF"}) {
+      scoped_trace trace(input);
+      const auto positive = serial_xml::from_string<double>(input);
+      expect_true(std::isinf(positive));
+      expect_false(std::signbit(positive));
+      const auto negative = serial_xml::from_string<double>(std::string("-") + input);
+      expect_true(std::isinf(negative));
+      expect_true(std::signbit(negative));
+    }
+  }
+
   [[= test{}]] void containers_and_custom_types() {
     using Nested = std::vector<std::vector<int>>;
     expect_equal((Nested{{1, 2}, {}, {3}}), serial_xml::from_string<Nested>("[[1, 2], [], [3]]"));
@@ -1605,6 +1662,242 @@ struct FromXmlTests {
         [&] { (void)(serial_xml::from_xml<DeclarationInput>(xml)); });
   }
 
+  [[= test{}]] void accepts_exact_depth_limit_and_rejects_the_next_level() {
+    struct DepthInput {};
+    // Root is depth zero: 255 nested elements are allowed, the 256th is not.
+    for (const int nested : {254, 255, 256, 257}) {
+      scoped_trace trace(std::format("nested elements: {}", nested));
+      std::string xml = "<DepthInput>";
+      for (int i = 0; i < nested; ++i) xml += "<x>";
+      for (int i = 0; i < nested; ++i) xml += "</x>";
+      xml += "</DepthInput>";
+      if (nested <= 255) {
+        expect_no_throw([&] { (void)serial_xml::from_xml<DepthInput>(xml); });
+      } else {
+        try {
+          (void)serial_xml::from_xml<DepthInput>(xml);
+          fail("Expected nesting limit rejection");
+        } catch (const serial_xml::deserialization_error& error) {
+          expect_true(std::string_view(error.what()).contains("XML nesting limit exceeded"));
+        }
+      }
+    }
+  }
+
+  [[= test{}]] void fixed_capacity_and_array_boundaries() {
+    struct CapacityInput {
+      std::inplace_vector<int, 3> values;
+    };
+    struct ArrayInput {
+      std::array<int, 3> values;
+    };
+    for (std::size_t count = 0; count <= 4; ++count) {
+      scoped_trace trace(std::format("element count: {}", count));
+      std::string elements;
+      std::string formatted = "[";
+      for (std::size_t i = 0; i < count; ++i) {
+        elements += "<element>" + std::to_string(i) + "</element>";
+        if (i) formatted += ", ";
+        formatted += std::to_string(i);
+      }
+      formatted += "]";
+      const auto capacity_xml = "<CapacityInput><values>" + elements + "</values></CapacityInput>";
+      const auto array_xml = "<ArrayInput><values>" + elements + "</values></ArrayInput>";
+      if (count <= 3) {
+        CapacityInput parsed;
+        assert_no_throw([&] { parsed = serial_xml::from_xml<CapacityInput>(capacity_xml); });
+        assert_equal(count, parsed.values.size());
+        std::inplace_vector<int, 3> from_text;
+        assert_no_throw(
+            [&] { from_text = serial_xml::from_string<std::inplace_vector<int, 3>>(formatted); });
+        expect_equal(parsed.values, from_text);
+        for (std::size_t i = 0; i < count; ++i) expect_equal(static_cast<int>(i), parsed.values[i]);
+      } else {
+        expect_throws<serial_xml::deserialization_error>(
+            [&] { (void)serial_xml::from_xml<CapacityInput>(capacity_xml); });
+        expect_throws<serial_xml::deserialization_error>(
+            [&] { (void)serial_xml::from_string<std::inplace_vector<int, 3>>(formatted); });
+      }
+      if (count == 3) {
+        expect_equal(std::array<int, 3>{0, 1, 2},
+                     serial_xml::from_xml<ArrayInput>(array_xml).values);
+        expect_equal(std::array<int, 3>{0, 1, 2},
+                     serial_xml::from_string<std::array<int, 3>>(formatted));
+      } else {
+        expect_throws<serial_xml::deserialization_error>(
+            [&] { (void)serial_xml::from_xml<ArrayInput>(array_xml); });
+        expect_throws<serial_xml::deserialization_error>(
+            [&] { (void)serial_xml::from_string<std::array<int, 3>>(formatted); });
+      }
+    }
+    struct ZeroCapacity {
+      std::inplace_vector<int, 0> values;
+    };
+    struct ZeroArray {
+      std::array<int, 0> values;
+    };
+    expect_true(serial_xml::from_xml<ZeroCapacity>("<ZeroCapacity><values/></ZeroCapacity>")
+                    .values.empty());
+    expect_true(serial_xml::from_xml<ZeroArray>("<ZeroArray><values/></ZeroArray>").values.empty());
+    expect_throws<serial_xml::deserialization_error>(
+        [] { (void)serial_xml::from_string<std::inplace_vector<int, 0>>("[1]"); });
+    expect_throws<serial_xml::deserialization_error>(
+        [] { (void)serial_xml::from_string<std::array<int, 0>>("[1]"); });
+  }
+
+  [[= test{}]] void numeric_xml_preserves_nonfinite_values_and_zero_sign() {
+    struct FloatingInput {
+      [[= serial_xml::attribute]] double attribute;
+      double child;
+    };
+    for (const double value :
+         {-0.0, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
+          std::numeric_limits<double>::quiet_NaN()}) {
+      const auto xml = clean_to_xml(FloatingInput{value, value});
+      scoped_trace trace(xml);
+      const auto parsed = serial_xml::from_xml<FloatingInput>(xml);
+      for (const auto actual : {parsed.attribute, parsed.child}) {
+        if (std::isnan(value))
+          expect_true(std::isnan(actual));
+        else {
+          expect_equal(value, actual);
+          expect_equal(std::signbit(value), std::signbit(actual));
+        }
+      }
+    }
+    expect_throws<serial_xml::deserialization_error>([] {
+      (void)serial_xml::from_xml<FloatingInput>(
+          "<FloatingInput attribute='1e99999'><child>0</child></FloatingInput>");
+    });
+  }
+
+  [[= test{}]] void utf8_crosses_word_simd_and_buffer_boundaries() {
+    struct UnicodeBoundary {
+      [[= serial_xml::attribute]] std::string attribute;
+      std::string text;
+      [[= serial_xml::cdata]] std::string cdata;
+    };
+    for (const std::string codepoint : {"é", "€", "😀"}) {
+      for (const std::size_t boundary : {8u, 16u, 32u, 64u, 128u, 256u, 4096u}) {
+        for (std::size_t split = 1; split < codepoint.size(); ++split) {
+          scoped_trace trace(
+              std::format("codepoint {:?}, boundary {}, split {}", codepoint, boundary, split));
+          const std::string prefix(boundary - split, 'a');
+          const auto value = prefix + codepoint + "&<";
+          const auto xml = clean_to_xml(UnicodeBoundary{value, value, value});
+          expect_equal("<UnicodeBoundary attribute=\"" + prefix + codepoint + "&amp;&lt;\"><text>" +
+                           prefix + codepoint + "&amp;&lt;</text><![CDATA[" + value +
+                           "]]></UnicodeBoundary>",
+                       xml);
+          const auto parsed = serial_xml::from_xml<UnicodeBoundary>(xml);
+          expect_equal(value, parsed.attribute);
+          expect_equal(value, parsed.text);
+          expect_equal(value, parsed.cdata);
+          // Remove each possible suffix of the codepoint, leaving an incomplete sequence.
+          const auto truncated = prefix + codepoint.substr(0, split);
+          expect_throws<std::invalid_argument>(
+              [&] { (void)clean_to_xml(UnicodeBoundary{truncated, "", ""}); });
+          expect_throws<std::invalid_argument>(
+              [&] { (void)clean_to_xml(UnicodeBoundary{"", truncated, ""}); });
+          expect_throws<std::invalid_argument>(
+              [&] { (void)clean_to_xml(UnicodeBoundary{"", "", truncated}); });
+          for (const auto broken_xml : {"<UnicodeBoundary attribute='" + truncated +
+                                            "'><text/><![CDATA[]]></UnicodeBoundary>",
+                                        "<UnicodeBoundary attribute=''><text>" + truncated +
+                                            "</text><![CDATA[]]></UnicodeBoundary>",
+                                        "<UnicodeBoundary attribute=''><text/><![CDATA[" +
+                                            truncated + "]]></UnicodeBoundary>"}) {
+            expect_throws<serial_xml::deserialization_error>(
+                [&] { (void)serial_xml::from_xml<UnicodeBoundary>(broken_xml); });
+          }
+        }
+      }
+    }
+  }
+
+  [[= test{}]] void conversion_failure_preserves_only_unvisited_members() {
+    struct PartialInput {
+      int first = 1;
+      int second = 2;
+      int last = 3;
+    };
+    PartialInput value;
+    expect_throws<serial_xml::deserialization_error>([&] {
+      serial_xml::from_xml(
+          value,
+          "<PartialInput><first>10</first><second>invalid</second><last>30</last></PartialInput>");
+    });
+    expect_equal(10, value.first);
+    expect_equal(2, value.second);
+    expect_equal(3, value.last);
+    // The object remains usable after the failed update.
+    serial_xml::from_xml(
+        value, "<PartialInput><first>11</first><second>22</second><last>33</last></PartialInput>");
+    expect_equal(11, value.first);
+    expect_equal(22, value.second);
+    expect_equal(33, value.last);
+  }
+
+  [[= test{}]] void throwing_setter_propagates_and_stops_later_assignments() {
+    struct ThrowingInput {
+      int first = 1;
+      [[= serial_xml::skip]] int stored = 2;
+      [[= serial_xml::skip]] int calls = 0;
+      [[ = serial_xml::setter, = serial_xml::name{"value"} ]] void set_value(int input) {
+        ++calls;
+        if (input < 0) throw std::domain_error("negative value");
+        stored = input;
+      }
+      int last = 3;
+    };
+    ThrowingInput value;
+    try {
+      serial_xml::from_xml(
+          value,
+          "<ThrowingInput><first>10</first><value>-1</value><last>30</last></ThrowingInput>");
+      fail("Expected setter exception");
+    } catch (const std::domain_error& error) {
+      expect_equal(std::string("negative value"), std::string(error.what()));
+    }
+    expect_equal(10, value.first);
+    expect_equal(2, value.stored);
+    expect_equal(1, value.calls);
+    expect_equal(3, value.last);
+    serial_xml::from_xml(
+        value, "<ThrowingInput><first>11</first><value>22</value><last>33</last></ThrowingInput>");
+    expect_equal(22, value.stored);
+    expect_equal(2, value.calls);
+    expect_equal(33, value.last);
+    // A failed conversion must not invoke the setter at all.
+    expect_throws<serial_xml::deserialization_error>([&] {
+      serial_xml::from_xml(
+          value,
+          "<ThrowingInput><first>12</first><value>bad</value><last>44</last></ThrowingInput>");
+    });
+    expect_equal(12, value.first);
+    expect_equal(22, value.stored);
+    expect_equal(2, value.calls);
+    expect_equal(33, value.last);
+  }
+
+  [[= test{}]] void setter_side_effects_are_not_rolled_back_on_exception() {
+    struct SideEffectInput {
+      [[= serial_xml::skip]] int stored = 1;
+      [[= serial_xml::setter]] void load(int input) {
+        stored = input;
+        throw std::runtime_error("failure after mutation");
+      }
+      int last = 2;
+    };
+    SideEffectInput value;
+    expect_throws_exact<std::runtime_error>([&] {
+      serial_xml::from_xml(value,
+                           "<SideEffectInput><load>7</load><last>8</last></SideEffectInput>");
+    });
+    expect_equal(7, value.stored);
+    expect_equal(2, value.last);
+  }
+
   [[= test{}]] void raw_scalar_ambiguity_and_attribute_normalization() {
     struct AmbiguousRawInput {
       [[= serial_xml::raw]] std::string first;
@@ -1829,6 +2122,84 @@ struct FromXmlTests {
         }
       }
     }
+  }
+
+  [[= test{}]] void seeded_unicode_round_trip_fuzzing() {
+    struct FuzzRecord {
+      [[= serial_xml::attribute]] std::string attribute;
+      std::string text;
+      [[= serial_xml::cdata]] std::string cdata;
+    };
+    std::mt19937 random(0x5EED1234);
+    const std::array<std::string_view, 14> fragments{"a", " ",  "\t", "\n",  "\r", "&", "<",
+                                                     ">", "\"", "'",  "]]>", "é",  "€", "😀"};
+    for (unsigned iteration = 0; iteration < 1000; ++iteration) {
+      scoped_trace trace(std::format("seed 0x5EED1234, iteration {}", iteration));
+      auto generate = [&] {
+        std::string value;
+        const auto count = random() % 80;
+        for (unsigned i = 0; i < count; ++i) value += fragments[random() % fragments.size()];
+        return value;
+      };
+      const FuzzRecord original{generate(), generate(), generate()};
+      const auto xml = clean_to_xml(original);
+      const auto parsed = serial_xml::from_xml<FuzzRecord>(xml);
+      expect_equal(original.attribute, parsed.attribute);
+      expect_equal(original.text, parsed.text);
+      expect_equal(original.cdata, parsed.cdata);
+      expect_equal(xml, clean_to_xml(parsed));
+    }
+  }
+
+  [[= test{}]] void seeded_malformed_input_fuzzing() {
+    struct FuzzInput {
+      std::string value;
+    };
+    std::mt19937 random(0xBAD5EED);
+    const std::string valid = "<FuzzInput><value>é &amp; 😀</value></FuzzInput>";
+    unsigned accepted = 0;
+    unsigned rejected = 0;
+    for (unsigned iteration = 0; iteration < 4000; ++iteration) {
+      std::string input;
+      if (iteration % 2 == 0) {
+        input = valid;
+        for (unsigned edits = 1 + random() % 4; edits > 0; --edits) {
+          const auto index = random() % (input.size() + 1);
+          switch (random() % 3) {
+            case 0:
+              input.insert(index, 1, static_cast<char>(random() & 255));
+              break;
+            case 1:
+              if (index < input.size()) input.erase(index, 1);
+              break;
+            default:
+              if (index < input.size()) input[index] = static_cast<char>(random() & 255);
+              break;
+          }
+        }
+      } else {
+        input.resize(random() % 256);
+        for (auto& byte : input) byte = static_cast<char>(random() & 255);
+      }
+      scoped_trace trace(std::format("seed 0xBAD5EED, iteration {}, input {:?}", iteration, input));
+      std::optional<FuzzInput> parsed;
+      try {
+        parsed = serial_xml::from_xml<FuzzInput>(input);
+      } catch (const serial_xml::deserialization_error&) {
+        ++rejected;
+        continue;
+      }
+      ++accepted;
+      // Once accepted, failures in canonicalization or reparsing must fail this
+      // test rather than being counted as ordinary malformed-input rejection.
+      const auto canonical = clean_to_xml(*parsed);
+      const auto reparsed = serial_xml::from_xml<FuzzInput>(canonical);
+      expect_equal(parsed->value, reparsed.value);
+      expect_equal(canonical, clean_to_xml(reparsed));
+    }
+    expect_true(accepted > 0);
+    expect_true(rejected > 0);
+    expect_equal(4000u, accepted + rejected);
   }
 
   [[= test{}]] void malformed_late_text_does_not_update_in_place_target() {

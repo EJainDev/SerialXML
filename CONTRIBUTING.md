@@ -68,6 +68,8 @@ When possible, prefer **Implement and test (PR)** so the change can be reviewed 
 - Run selected cases with `./build/debug/tests/serial_xml_tests --filter 'FromXmlTests.*'` or list them with `--list`.
 - Run the full test suite before submitting changes: `ctest --test-dir build/debug --output-on-failure --no-tests=error`
 - Check both consumer paths after a build: `cmake -DSERIAL_XML_SOURCE_DIR="$PWD" -DSERIAL_XML_BINARY_DIR="$PWD/build/debug" -P tests/consumer/run.cmake`.
+- Seeded fuzz checks run automatically in CTest: 1,000 Unicode round trips and 4,000 malformed or byte-mutated XML inputs. Failure traces include the seed, iteration, and input where applicable. These are bounded, reproducible checks rather than a coverage-guided fuzz campaign.
+- Run the explicit mutation sample after building: `python3 tests/tools/mutation_check.py --build-dir build/debug`. It builds isolated source copies under `build/mutation-checks`, verifies a passing baseline, then requires assertion failures for numeric-consumption, nesting-limit, capacity-limit, and quote-escaping mutants. Compile errors and crashes do not count as detected mutants. Logs and `results.json` record the outcome; this sample is not a project-wide mutation score.
 - All tests must pass. Do not break existing functionality.
 - Add new tests for new features.
 - Add regression tests for bug fixes.
