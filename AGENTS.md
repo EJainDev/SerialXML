@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`include/serial_xml.cxx` is the C++26 `serial_xml` module and the library's main implementation. Add focused usage samples under `examples/`, Google Test cases in `tests/test_serial_xml.cpp`, and performance comparisons in `benchmarks/`. `assets/` holds README images; `cmake/` holds package configuration. The root `CMakeLists.txt` and `CMakePresets.json` define builds. Generated files belong in the ignored `build/` directory.
+`include/serial_xml.cxx` is the C++26 `serial_xml` module and the library's main implementation. Add focused usage samples under `examples/`, AnnoTest cases in `tests/test_serial_xml.cpp`, and performance comparisons in `benchmarks/`. `assets/` holds README images; `cmake/` holds package configuration. The root `CMakeLists.txt` and `CMakePresets.json` define builds. Generated files belong in the ignored `build/` directory.
 
 ## Build, Test, and Development Commands
 
@@ -23,7 +23,7 @@ Format changed C++ files with `clang-format -i <file>`; `.clang-format` uses Goo
 
 ## Testing Guidelines
 
-Use Google Test's `TEST(Suite, Behavior)` pattern and add cases to `tests/test_serial_xml.cpp`. Cover new behavior and regressions with assertions on the exact XML output where practical. Run the full `ctest` command above before submitting; all tests must pass. No numeric coverage threshold is specified.
+Use AnnoTest suites with `[[= test{}]]` methods and add cases to `tests/test_serial_xml.cpp`. Cover new behavior and regressions with assertions on the exact XML output where practical. Run the full `ctest` command above before submitting; all tests must pass. No numeric coverage threshold is specified.
 
 ## Commit & Pull Request Guidelines
 

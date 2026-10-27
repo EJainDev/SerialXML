@@ -45,7 +45,8 @@ jobs:
           push: never
           runCmd: |
             set -eu
-            cmake --preset release-test-gcc
+            # Exercise fetched dependencies and reject accidental GTest usage.
+            cmake --preset release-test-gcc -DCMAKE_DISABLE_FIND_PACKAGE_StructuralTuple=TRUE -DCMAKE_DISABLE_FIND_PACKAGE_GTest=TRUE
             cmake --build --preset build-release-test
             ctest --test-dir build/release --output-on-failure --no-tests=error --output-junit test-results.xml
             cmake -DSERIAL_XML_SOURCE_DIR="$PWD" -DSERIAL_XML_BINARY_DIR="$PWD/build/release" -P tests/consumer/run.cmake

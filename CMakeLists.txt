@@ -16,6 +16,10 @@ project(
 
 include(FetchContent)
 
+option(BUILD_TESTS "Enable building of tests" OFF)
+option(BUILD_EXAMPLES "Enable building of examples" ${PROJECT_IS_TOP_LEVEL})
+option(BUILD_BENCHMARKS "Enable building of benchmarks" ${PROJECT_IS_TOP_LEVEL})
+
 find_package(StructuralTuple QUIET)
 
 if(NOT StructuralTuple_FOUND)
@@ -24,17 +28,24 @@ if(NOT StructuralTuple_FOUND)
     GIT_REPOSITORY https://github.com/EJainDev/StructuralTuple.git
     GIT_TAG 7ad88be28ceece1d6d41da72754c6cf2c969fd6d)
 
+  # Dependency options share our names; do not enable its tests (which use
+  # GTest) when building SerialXML's AnnoTest suite.
+  block(SCOPE_FOR VARIABLES)
+  set(BUILD_TESTS OFF)
+  set(BUILD_EXAMPLES OFF)
+  set(BUILD_BENCHMARKS OFF)
   FetchContent_MakeAvailable(structural_tuple)
+  endblock()
 endif()
-
-option(BUILD_TESTS "Enable building of tests" OFF)
-option(BUILD_EXAMPLES "Enable building of examples" ${PROJECT_IS_TOP_LEVEL})
-option(BUILD_BENCHMARKS "Enable building of benchmarks" ${PROJECT_IS_TOP_LEVEL})
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 if(BUILD_TESTS)
+  # CMake 4.3 shares the std module across targets; enable reflection there too.
+  if(CMAKE_VERSION VERSION_LESS 4.4)
+    string(APPEND CMAKE_CXX_FLAGS " -freflection")
+  endif()
   include(CTest)
   enable_testing()
 endif()
